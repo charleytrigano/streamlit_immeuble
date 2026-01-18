@@ -1,11 +1,9 @@
 import streamlit as st
 import pandas as pd
 
-from utils.pluriannuel import aggregate_pluriannuel, compute_trends
-from utils.graphs_pluri import plot_trend_par_poste, plot_global_trends
-from utils.budget import load_budget
-from utils.budget_analysis import analyse_budget_vs_reel
-from utils.graphs_budget import plot_budget_vs_reel
+# =========================
+# IMPORTS MÉTIERS
+# =========================
 from utils.analyse import analyse_pdfs
 from utils.graphs import (
     plot_charges_par_poste,
@@ -13,30 +11,38 @@ from utils.graphs import (
     plot_top_fournisseurs,
     plot_recurrent_vs_ponctuel
 )
+from utils.budget import load_budget
+from utils.budget_analysis import analyse_budget_vs_reel
+from utils.graphs_budget import plot_budget_vs_reel
+from utils.pluriannuel import aggregate_pluriannuel, compute_trends
+from utils.graphs_pluri import plot_trend_par_poste, plot_global_trends
 
-
-
-# -------------------------------------------------
+# =========================
 # CONFIG STREAMLIT
-# -------------------------------------------------
+# =========================
 st.set_page_config(
-    page_title="Analyse des charges de l'immeuble",
+    page_title="Pilotage des charges – Immeuble",
     layout="wide"
 )
 
-st.title("Analyse facture par facture – Gestion de l’immeuble")
+st.title("Pilotage des charges de l’immeuble")
 st.markdown(
     """
-    Cette application permet d’analyser **facture par facture** les charges de l’immeuble,
-    afin d’identifier les **postes coûteux**, les **prestataires dominants** et les
-    **leviers de réduction des frais**.
+    Outil d’analyse **facture par facture**, **budget vs réel** et **pluriannuel**  
+    à destination du **conseil syndical**, du **syndic** et des **copropriétaires**.
     """
 )
 
-# -------------------------------------------------
-# PARAMÈTRES GÉNÉRAUX
-# -------------------------------------------------
-st.sidebar.header("Paramètres")
+# =========================
+# SESSION STATE (V4)
+# =========================
+if "historique" not in st.session_state:
+    st.session_state.historique = []
+
+# =========================
+# SIDEBAR PARAMÈTRES
+# =========================
+st.sidebar.header("Paramètres généraux")
 
 annee = st.sidebar.number_input(
     "Année analysée",
@@ -47,78 +53,165 @@ annee = st.sidebar.number_input(
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     """
-    **Mode d’utilisation**
-    1. Indiquez les comptes comptables  
-    2. Uploadez les factures PDF par compte  
-    3. Lancez l’analyse  
+    **Processus**
+    1. Saisir les comptes  
+    2. Uploader les PDF  
+    3. Lancer l’analyse  
+    4. Ajouter le budget  
+    5. Comparer les années  
     """
 )
 
-# -------------------------------------------------
-# SAISIE DES COMPTES
-# -------------------------------------------------
+# =========================
+# 1️⃣ COMPTES COMPTABLES
+# =========================
 st.markdown("## 1️⃣ Comptes comptables")
 
-comptes = st.text_area(
-    "Liste des comptes (1 par ligne — noms EXACTS des dossiers)",
+comptes_text = st.text_area(
+    "Liste des comptes (1 par ligne – noms EXACTS des dossiers)",
     height=150,
     placeholder="Entretien plomberie\nContrat entretien ascenseur\nEau\nAssurances"
 )
 
-liste_comptes = [c.strip() for c in comptes.splitlines() if c.strip()]
+comptes = [c.strip() for c in comptes_text.splitlines() if c.strip()]
 
-# -------------------------------------------------
-# UPLOAD DES FACTURES
-# -------------------------------------------------
+# =========================
+# 2️⃣ UPLOAD FACTURES
+# =========================
 st.markdown("## 2️⃣ Upload des factures PDF")
 
 structure = {}
 
-if liste_comptes:
-    for compte in liste_comptes:
+if comptes:
+    for compte in comptes:
         fichiers = st.file_uploader(
             f"📂 {compte}",
             type="pdf",
             accept_multiple_files=True,
-            key=compte
+            key=f"pdf_{compte}_{annee}"
         )
         if fichiers:
             structure[compte] = fichiers
 else:
     st.info("Veuillez saisir au moins un compte comptable.")
 
-# -------------------------------------------------
-# LANCEMENT DE L’ANALYSE
-# -------------------------------------------------
-st.markdown("## 3️⃣ Lancer l’analyse")
+# =========================
+# 3️⃣ ANALYSE ANNUELLE
+# =========================
+st.markdown("## 3️⃣ Analyse annuelle")
 
-if st.button("🚀 Analyser les factures"):
+if st.button("🚀 Lancer l’analyse annuelle"):
     if not structure:
         st.warning("Aucune facture PDF n’a été uploadée.")
     else:
-        with st.spinner("Analyse des factures en cours..."):
+        with st.spinner("Analyse des factures en cours…"):
             df = analyse_pdfs(structure, annee)
 
-        st.success("Analyse terminée")
+        st.session_state.historique.append(df)
 
-        st.markdown("## 💰 Budget voté vs Réel")
+        st.success(f"Analyse {annee} terminée")
+
+        # -------------------------
+        # TABLE FACTURES
+        # -------------------------
+        st.markdown("## 📄 Détail des factures")
+        st.dataframe(df, use_container_width=True)
+
+        # -------------------------
+        # SYNTHÈSE PAR POSTE
+        # -------------------------
+        st.markdown("## 📊 Synthèse par poste")
+
+        synthese = (
+            df.groupby(["Compte", "Poste"])
+            .agg(
+                Montant_Total=("Montant TTC", "sum"),
+                Nb_Factures=("Fichier", "count"),
+                Nb_Fournisseurs=("Fournisseur", "nunique")
+            )
+            .reset_index()
+            .sort_values("Montant_Total", ascending=False)
+        )
+
+        st.dataframe(synthese, use_container_width=True)
+
+        # -------------------------
+        # FILTRES
+        # -------------------------
+        st.markdown("## 🔍 Filtres")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            filtre_postes = st.multiselect(
+                "Filtrer par poste",
+                sorted(df["Poste"].unique())
+            )
+
+        with col2:
+            filtre_fournisseurs = st.multiselect(
+                "Filtrer par fournisseur",
+                sorted(df["Fournisseur"].unique())
+            )
+
+        df_filtre = df.copy()
+
+        if filtre_postes:
+            df_filtre = df_filtre[df_filtre["Poste"].isin(filtre_postes)]
+
+        if filtre_fournisseurs:
+            df_filtre = df_filtre[df_filtre["Fournisseur"].isin(filtre_fournisseurs)]
+
+        # -------------------------
+        # GRAPHIQUES (V2)
+        # -------------------------
+        st.markdown("## 📈 Analyses graphiques")
+
+        plot_charges_par_poste(df_filtre)
+        plot_pareto_postes(df_filtre)
+        plot_top_fournisseurs(df_filtre)
+        plot_recurrent_vs_ponctuel(df_filtre)
+
+        # -------------------------
+        # EXPORT EXCEL
+        # -------------------------
+        st.markdown("## 📥 Export annuel")
+
+        output = f"analyse_charges_{annee}.xlsx"
+
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, sheet_name="Factures", index=False)
+            synthese.to_excel(writer, sheet_name="Synthese_par_poste", index=False)
+
+        with open(output, "rb") as f:
+            st.download_button(
+                "📥 Télécharger l’analyse Excel",
+                f,
+                file_name=output,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+# =========================
+# 4️⃣ BUDGET VS RÉEL (V3)
+# =========================
+st.markdown("## 💰 Budget voté vs Réel")
 
 budget_file = st.file_uploader(
     "Uploader le fichier Excel du budget voté",
     type=["xlsx"]
 )
 
-if budget_file:
+if budget_file and st.session_state.historique:
     try:
         df_budget = load_budget(budget_file)
+        df_latest = st.session_state.historique[-1]
 
-        df_budget_vs_reel = analyse_budget_vs_reel(df, df_budget)
+        df_budget_vs_reel = analyse_budget_vs_reel(df_latest, df_budget)
 
         st.dataframe(df_budget_vs_reel, use_container_width=True)
 
         plot_budget_vs_reel(df_budget_vs_reel)
 
-        # Commentaires automatiques
         st.markdown("### 📝 Commentaires automatiques (AG)")
 
         for _, row in df_budget_vs_reel.iterrows():
@@ -131,34 +224,49 @@ if budget_file:
     except Exception as e:
         st.error(str(e))
 
+# =========================
+# 5️⃣ ANALYSE PLURIANNUELLE (V4)
+# =========================
+st.markdown("## 📆 Analyse pluriannuelle")
 
-        # -------------------------------------------------
-        # TABLE FACTURES
-        # -------------------------------------------------
-        st.markdown("## 📄 Détail des factures")
-        st.dataframe(df, use_container_width=True)
+if len(st.session_state.historique) < 2:
+    st.info("Analysez au moins deux années pour activer la vue pluriannuelle.")
+else:
+    df_pluri = aggregate_pluriannuel(st.session_state.historique)
+    df_trends = compute_trends(df_pluri)
 
-        # -------------------------------------------------
-        # SYNTHÈSE PAR POSTE
-        # -------------------------------------------------
-        st.markdown("## 📊 Synthèse par poste")
+    st.markdown("### 🔎 Synthèse pluriannuelle")
+    st.dataframe(df_trends, use_container_width=True)
 
-        synthese = (
-            df.groupby(["Compte", "Poste"])
-              .agg(
-                  Montant_Total=("Montant TTC", "sum"),
-                  Nb_Factures=("Fichier", "count"),
-                  Nb_Fournisseurs=("Fournisseur", "nunique")
-              )
-              .reset_index()
-              .sort_values("Montant_Total", ascending=False)
-        )
+    plot_global_trends(df_pluri)
 
-        st.dataframe(synthese, use_container_width=True)
+    poste_sel = st.selectbox(
+        "Évolution d’un poste",
+        sorted(df_pluri["Poste"].unique())
+    )
 
-        # -------------------------------------------------
-        # FILTRES GRAPHIQUES
-        # -------------------------------------------------
-        st.markdown("## 🔍 Filtres d’analyse")
+    plot_trend_par_poste(df_pluri, poste_sel)
 
-        col1, col2 = st.columns(2)
+    st.markdown("### 🚨 Alertes dérives")
+
+    alertes = df_trends[
+        (df_trends["Variation %"] > 10) &
+        (~df_trends["Variation %"].isna())
+    ]
+
+    if alertes.empty:
+        st.success("Aucune dérive significative détectée.")
+    else:
+        for _, row in alertes.iterrows():
+            st.warning(
+                f"Le poste **{row['Poste']}** augmente de "
+                f"{row['Variation %']:.1f} % en {int(row['Année'])}."
+            )
+
+# =========================
+# FOOTER
+# =========================
+st.markdown("---")
+st.markdown(
+    "*Outil de pilotage des charges – usage conseil syndical / syndic / copropriété*"
+)
