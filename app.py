@@ -267,6 +267,70 @@ else:
     st.info("Analysez au moins une année pour générer la base complète.")
 
 # =========================
+# A️⃣ CRÉATION BASE EXCEL VIERGE
+# =========================
+st.markdown("## 🆕 Créer une base Excel vierge")
+
+st.markdown(
+    "Cette base constitue le **référentiel de travail**. "
+    "Elle est volontairement **vide** et destinée à être complétée manuellement."
+)
+
+if st.button("🆕 Créer la base Excel vierge"):
+    # Onglet Factures
+    df_factures = pd.DataFrame(columns=[
+        "Année",
+        "Compte",
+        "Poste",
+        "Fournisseur",
+        "Date",
+        "Montant TTC",
+        "Type",
+        "Récurrent",
+        "Commentaire"
+    ])
+
+    # Onglet Pilotage
+    df_pilotage = pd.DataFrame(columns=[
+        "Poste",
+        "Décision CS",
+        "Action",
+        "Priorité",
+        "Commentaire"
+    ])
+
+    # Onglet Hypothèses
+    df_hypotheses = pd.DataFrame(columns=[
+        "Poste",
+        "Réduction cible (%)",
+        "Commentaire"
+    ])
+
+    # Onglet Paramètres
+    df_parametres = pd.DataFrame({
+        "Clé": ["Immeuble", "Syndic", "Exercice de référence"],
+        "Valeur": ["", "", ""]
+    })
+
+    base_file = "base_depenses_immeuble.xlsx"
+
+    with pd.ExcelWriter(base_file, engine="openpyxl") as writer:
+        df_factures.to_excel(writer, sheet_name="Factures", index=False)
+        df_pilotage.to_excel(writer, sheet_name="Pilotage", index=False)
+        df_hypotheses.to_excel(writer, sheet_name="Hypothèses", index=False)
+        df_parametres.to_excel(writer, sheet_name="Paramètres", index=False)
+
+    with open(base_file, "rb") as f:
+        st.download_button(
+            "📥 Télécharger la base Excel vierge",
+            f,
+            file_name=base_file,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+
+
+# =========================
 # FOOTER
 # =========================
 st.markdown("---")
