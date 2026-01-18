@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 
+from utils.budget import load_budget
+from utils.budget_analysis import analyse_budget_vs_reel
+from utils.graphs_budget import plot_budget_vs_reel
 from utils.analyse import analyse_pdfs
 from utils.graphs import (
     plot_charges_par_poste,
@@ -8,6 +11,8 @@ from utils.graphs import (
     plot_top_fournisseurs,
     plot_recurrent_vs_ponctuel
 )
+
+
 
 # -------------------------------------------------
 # CONFIG STREAMLIT
@@ -93,6 +98,37 @@ if st.button("🚀 Analyser les factures"):
             df = analyse_pdfs(structure, annee)
 
         st.success("Analyse terminée")
+
+        st.markdown("## 💰 Budget voté vs Réel")
+
+budget_file = st.file_uploader(
+    "Uploader le fichier Excel du budget voté",
+    type=["xlsx"]
+)
+
+if budget_file:
+    try:
+        df_budget = load_budget(budget_file)
+
+        df_budget_vs_reel = analyse_budget_vs_reel(df, df_budget)
+
+        st.dataframe(df_budget_vs_reel, use_container_width=True)
+
+        plot_budget_vs_reel(df_budget_vs_reel)
+
+        # Commentaires automatiques
+        st.markdown("### 📝 Commentaires automatiques (AG)")
+
+        for _, row in df_budget_vs_reel.iterrows():
+            if row["Statut"] == "❌ Dépassement":
+                st.warning(
+                    f"Le poste **{row['Poste']}** dépasse le budget de "
+                    f"{row['Écart €']:.0f} € ({row['Écart %']:.1f} %)."
+                )
+
+    except Exception as e:
+        st.error(str(e))
+
 
         # -------------------------------------------------
         # TABLE FACTURES
