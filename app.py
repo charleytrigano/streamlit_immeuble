@@ -4,17 +4,13 @@ import pandas as pd
 # ======================================================
 # CONFIG
 # ======================================================
-st.set_page_config(
-    page_title="Pilotage des charges",
-    layout="wide"
-)
-
+st.set_page_config(page_title="Pilotage des charges", layout="wide")
 st.title("Pilotage des charges de l’immeuble")
 
 # ======================================================
 # OUTILS
 # ======================================================
-def normalize_columns(df):
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df.rename(columns={
         "Année": "annee",
         "Compte": "compte",
@@ -26,7 +22,7 @@ def normalize_columns(df):
 
 def normalize_budget_account(compte: str) -> str:
     """
-    Normalisation comptable :
+    Règle comptable :
     - 621x / 622x → 4 chiffres
     - autres → 3 chiffres
     """
@@ -55,20 +51,25 @@ with st.sidebar:
     dep_csv = st.file_uploader("Dépenses (CSV)", type="csv")
     bud_csv = st.file_uploader("Budget (CSV)", type="csv")
 
+    # --- Chargement dépenses
     if dep_csv:
         df = pd.read_csv(dep_csv, sep=None, engine="python")
         df.columns = [c.strip().replace("\ufeff", "") for c in df.columns]
         df = normalize_columns(df)
 
+        df["annee"] = df["annee"].astype(int)
         df["compte"] = df["compte"].astype(str)
+
         st.session_state.df_depenses = df
         st.success("Dépenses chargées")
 
+    # --- Chargement budget
     if bud_csv:
         dfb = pd.read_csv(bud_csv, sep=None, engine="python")
         dfb.columns = [c.strip().replace("\ufeff", "") for c in dfb.columns]
         dfb = normalize_columns(dfb)
 
+        dfb["annee"] = dfb["annee"].astype(int)
         dfb["compte"] = dfb["compte"].astype(str)
         dfb["compte"] = dfb["compte"].apply(normalize_budget_account)
 
@@ -90,10 +91,7 @@ df_budget = st.session_state.df_budget
 # ======================================================
 with st.sidebar:
     st.markdown("## 🧭 Navigation")
-    page = st.radio(
-        "Vue",
-        ["📊 État des dépenses", "💰 Budget"]
-    )
+    page = st.radio("Vue", ["📊 État des dépenses", "💰 Budget"])
 
 # ======================================================
 # 📊 ONGLET 1 — ÉTAT DES DÉPENSES
@@ -105,10 +103,7 @@ if page == "📊 État des dépenses":
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        annee = st.selectbox(
-            "Année",
-            sorted(df_dep["annee"].unique())
-        )
+        annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
 
     df_f = df_dep[df_dep["annee"] == annee].copy()
 
@@ -158,7 +153,7 @@ if page == "💰 Budget":
         comptes = sorted(df_budget["compte"].unique()) if not df_budget.empty else []
         compte_sel = st.selectbox("Compte", ["Tous"] + comptes)
 
-    # Filtrage
+    # Filtrage budget
     dfb = df_budget[df_budget["annee"] == annee_b].copy()
 
     if groupe_sel != "Tous":
