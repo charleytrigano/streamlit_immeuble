@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 
+from utils.pluriannuel import aggregate_pluriannuel, compute_trends
+from utils.graphs_pluri import plot_trend_par_poste, plot_global_trends
 from utils.budget import load_budget
 from utils.budget_analysis import analyse_budget_vs_reel
 from utils.graphs_budget import plot_budget_vs_reel
