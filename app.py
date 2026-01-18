@@ -8,27 +8,44 @@ st.set_page_config(page_title="Pilotage des charges", layout="wide")
 st.title("Pilotage des charges de l’immeuble")
 
 # ======================================================
-# OUTILS
+# OUTILS ROBUSTES
 # ======================================================
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    # nettoyage basique
     df.columns = (
         df.columns
         .str.strip()
         .str.lower()
+        .str.replace(" ", "_")
         .str.replace("é", "e")
         .str.replace("è", "e")
         .str.replace("ê", "e")
         .str.replace("à", "a")
-        .str.replace(" ", "_")
     )
-    return df.rename(columns={
-        "annee": "annee",
+
+    # détection colonne année
+    for col in df.columns:
+        if col in ["annee", "année", "ann_e", "an", "year"]:
+            df = df.rename(columns={col: "annee"})
+            break
+
+    # renommages standards
+    rename_map = {
         "compte": "compte",
         "montant_ttc": "montant_ttc",
         "montant": "montant_ttc",
         "budget": "budget",
         "fournisseur": "fournisseur",
-    })
+        "date": "date",
+        "poste": "poste",
+        "commentaire": "commentaire",
+        "type": "type",
+        "r_current": "recurrent",
+    }
+
+    df = df.rename(columns={c: rename_map[c] for c in df.columns if c in rename_map})
+    return df
+
 
 def normalize_budget_account(compte: str) -> str:
     compte = str(compte)
@@ -92,7 +109,7 @@ with st.sidebar:
         st.success("Budget chargé")
 
 # ======================================================
-# STOP
+# STOP SI PAS DE DÉPENSES
 # ======================================================
 if st.session_state.df_depenses is None:
     st.stop()
@@ -101,7 +118,7 @@ df_dep = st.session_state.df_depenses
 df_budget = st.session_state.df_budget
 
 # ======================================================
-# ANALYSE — BUDGET VS RÉEL AVEC DÉTAIL
+# ANALYSE — BUDGET VS RÉEL AVEC DRILL-DOWN
 # ======================================================
 st.markdown("## 📊 Analyse Budget vs Réel")
 
@@ -144,7 +161,7 @@ st.dataframe(
 )
 
 # ---- Drill-down
-st.markdown("## 🔍 Détail par compte")
+st.markdown("## 🔍 Détail par compte réel")
 
 compte_sel = st.selectbox("Compte budgété", macro["compte"].tolist())
 
@@ -158,9 +175,9 @@ detail = (
     .sort_values("montant_ttc", ascending=False)
 )
 
-detail["% du budget"] = detail["montant_ttc"] / ligne["budget"]
+detail["% du budget"] = detail["montant_ttc"] / ligne["budget"] * 100
 detail["% du reel"] = (
-    detail["montant_ttc"] / ligne["reel"] if ligne["reel"] != 0 else 0
+    detail["montant_ttc"] / ligne["reel"] * 100 if ligne["reel"] != 0 else 0
 )
 
 st.dataframe(detail, use_container_width=True)
