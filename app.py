@@ -13,7 +13,7 @@ st.title("Pilotage des charges de l’immeuble")
 st.markdown(
     """
     Pilotage budgétaire et analyse des charges  
-    **Budget suivi par comptes généraux (2 chiffres)**  
+    **Budget suivi par comptes généraux (3 chiffres)**  
     Source unique : **CSV**
     """
 )
@@ -50,8 +50,6 @@ uploaded_csv = st.file_uploader(
 if uploaded_csv:
     try:
         df = pd.read_csv(uploaded_csv, sep=None, engine="python")
-
-        # Nettoyage colonnes
         df.columns = [c.strip().replace("\ufeff", "") for c in df.columns]
 
         required = [
@@ -64,9 +62,8 @@ if uploaded_csv:
             st.error(f"Colonnes manquantes : {', '.join(missing)}")
         else:
             df["Compte"] = df["Compte"].astype(str)
-            df["compte_general"] = df["Compte"].str[:2]
+            df["compte_general"] = df["Compte"].str[:3]  # ✅ 3 chiffres
 
-            # Normalisation noms
             df = df.rename(columns={
                 "Année": "annee",
                 "Montant TTC": "montant_ttc"
@@ -185,7 +182,7 @@ if not mode_copro:
     st.session_state.df_budget = df_budget_final
 
 # =========================
-# 📊 BUDGET vs RÉEL (FIX)
+# 📊 BUDGET vs RÉEL (3 chiffres)
 # =========================
 if not mode_copro and not st.session_state.df_budget.empty:
     st.markdown("## 📊 Budget vs Réel (comptes généraux)")
