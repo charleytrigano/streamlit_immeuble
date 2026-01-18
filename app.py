@@ -44,6 +44,7 @@ def normalize_budget(df):
 # ======================================================
 if "df_depenses" not in st.session_state:
     st.session_state.df_depenses = None
+
 if "df_budget" not in st.session_state:
     st.session_state.df_budget = None
 
@@ -83,19 +84,45 @@ with st.sidebar:
     )
 
 # ======================================================
-# 📊 ONGLET 1 — ÉTAT DES DÉPENSES
+# 📊 ONGLET 1 — ÉTAT DES DÉPENSES (ÉDITABLE)
 # ======================================================
 if page == "📊 État des dépenses":
 
     annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
     df_a = df_dep[df_dep["annee"] == annee].copy()
 
+    # KPI
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total dépenses (€)", f"{df_a['montant_ttc'].sum():,.2f}".replace(",", " "))
+    col1.metric("Total (€)", f"{df_a['montant_ttc'].sum():,.2f}".replace(",", " "))
     col2.metric("Lignes", len(df_a))
     col3.metric("Fournisseurs", df_a["fournisseur"].nunique())
 
-    st.dataframe(df_a, use_container_width=True)
+    st.markdown("### ✏️ Ajouter / Modifier / Supprimer des dépenses")
+
+    df_edit = st.data_editor(
+        df_a,
+        num_rows="dynamic",
+        use_container_width=True
+    )
+
+    # 🔑 Reconstruction complète des dépenses
+    df_other_years = df_dep[df_dep["annee"] != annee]
+    st.session_state.df_depenses = pd.concat(
+        [df_other_years, df_edit],
+        ignore_index=True
+    )
+
+    # Sauvegarde
+    st.markdown("### 💾 Sauvegarde des dépenses")
+    export_dep = f"depenses_{annee}.csv"
+    st.session_state.df_depenses.to_csv(export_dep, index=False, encoding="utf-8")
+
+    with open(export_dep, "rb") as f:
+        st.download_button(
+            "📥 Télécharger les dépenses",
+            f,
+            file_name=export_dep
+        )
 
 # ======================================================
 # 💰 ONGLET 2 — BUDGET
@@ -103,22 +130,26 @@ if page == "📊 État des dépenses":
 if page == "💰 Budget":
 
     annee_b = st.selectbox("Année budgétaire", sorted(df_budget["annee"].unique()))
-
-    # KPI CALCULÉ SUR LA BASE COMPLÈTE
-    budget_total = df_budget[df_budget["annee"] == annee_b]["budget"].sum()
-
     dfb = df_budget[df_budget["annee"] == annee_b].copy()
+
+    budget_total = dfb["budget"].sum()
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Budget total (€)", f"{budget_total:,.2f}".replace(",", " "))
     col2.metric("Comptes", len(dfb))
     col3.metric("Groupes", dfb["compte"].str[:2].nunique())
 
-    st.markdown("### ✏️ Ajouter / Modifier / Supprimer")
-    df_edit = st.data_editor(dfb, num_rows="dynamic", use_container_width=True)
+    st.markdown("### ✏️ Ajouter / Modifier / Supprimer le budget")
 
+    df_edit = st.data_editor(
+        dfb,
+        num_rows="dynamic",
+        use_container_width=True
+    )
+
+    df_other_years = df_budget[df_budget["annee"] != annee_b]
     st.session_state.df_budget = pd.concat(
-        [df_budget[df_budget["annee"] != annee_b], df_edit],
+        [df_other_years, df_edit],
         ignore_index=True
     )
 
@@ -128,10 +159,7 @@ if page == "💰 Budget":
 if page == "📊 Budget vs Réel – Analyse":
 
     annee = st.selectbox("Année analysée", sorted(df_dep["annee"].unique()))
-
     dep = df_dep[df_dep["annee"] == annee].copy()
-    dep["compte"] = dep["compte"].astype(str)
-
     bud = df_budget[df_budget["annee"] == annee].copy()
 
     cles_budget = sorted(bud["compte"].unique(), key=len, reverse=True)
@@ -165,9 +193,3 @@ if page == "📊 Budget vs Réel – Analyse":
         comp[["compte", "budget", "reel", "ecart_eur", "ecart_pct"]],
         use_container_width=True
     )
-
-# ======================================================
-# FOOTER
-# ======================================================
-st.markdown("---")
-st.caption("Outil de pilotage – Conseil syndical / Copropriété")
