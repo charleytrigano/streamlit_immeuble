@@ -10,16 +10,42 @@ st.title("Pilotage des charges de l’immeuble")
 # ======================================================
 # OUTILS
 # ======================================================
-def normalize_columns(df):
-    return df.rename(columns={
-        "Année": "annee",
-        "Compte": "compte",
-        "Montant TTC": "montant_ttc",
-        "Budget": "budget",
-        "Fournisseur": "fournisseur",
-    })
+def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Nettoie et normalise les noms de colonnes de façon défensive
+    """
+    df.columns = (
+        df.columns
+        .str.strip()
+        .str.lower()
+        .str.replace("é", "e")
+        .str.replace("è", "e")
+        .str.replace("ê", "e")
+        .str.replace("à", "a")
+        .str.replace(" ", "_")
+    )
+
+    rename_map = {
+        "annee": "annee",
+        "annees": "annee",
+        "an": "annee",
+        "compte": "compte",
+        "montant_ttc": "montant_ttc",
+        "montant": "montant_ttc",
+        "budget": "budget",
+        "fournisseur": "fournisseur",
+    }
+
+    df = df.rename(columns={c: rename_map[c] for c in df.columns if c in rename_map})
+    return df
+
 
 def normalize_budget_account(compte: str) -> str:
+    """
+    Règle comptable :
+    - 621x / 622x → 4 chiffres
+    - autres → 3 chiffres
+    """
     compte = str(compte)
     if compte.startswith(("621", "622")):
         return compte[:4]
@@ -32,9 +58,7 @@ if "df_depenses" not in st.session_state:
     st.session_state.df_depenses = None
 
 if "df_budget" not in st.session_state:
-    st.session_state.df_budget = pd.DataFrame(
-        columns=["annee", "compte", "budget"]
-    )
+    st.session_state.df_budget = pd.DataFrame(columns=["annee", "compte", "budget"])
 
 # ======================================================
 # SIDEBAR — CHARGEMENT
@@ -45,27 +69,43 @@ with st.sidebar:
     dep_csv = st.file_uploader("Dépenses (CSV)", type="csv")
     bud_csv = st.file_uploader("Budget (CSV)", type="csv")
 
+    # ---------- Dépenses ----------
     if dep_csv:
         df = pd.read_csv(dep_csv, sep=None, engine="python")
-        df.columns = [c.strip().replace("\ufeff", "") for c in df.columns]
-        df = normalize_columns(df)
+        df = clean_columns(df)
+
+        if "annee" not in df.columns:
+            st.error("Colonne ANNEE introuvable dans le fichier des dépenses.")
+            st.stop()
+
+        if "compte" not in df.columns or "montant_ttc" not in df.columns:
+            st.error("Colonnes COMPTE ou MONTANT_TTC manquantes.")
+            st.stop()
+
         df["annee"] = df["annee"].astype(int)
         df["compte"] = df["compte"].astype(str)
+
         st.session_state.df_depenses = df
         st.success("Dépenses chargées")
 
+    # ---------- Budget ----------
     if bud_csv:
         dfb = pd.read_csv(bud_csv, sep=None, engine="python")
-        dfb.columns = [c.strip().replace("\ufeff", "") for c in dfb.columns]
-        dfb = normalize_columns(dfb)
+        dfb = clean_columns(dfb)
+
+        if not {"annee", "compte", "budget"}.issubset(dfb.columns):
+            st.error("Le budget doit contenir : annee, compte, budget.")
+            st.stop()
+
         dfb["annee"] = dfb["annee"].astype(int)
         dfb["compte"] = dfb["compte"].astype(str)
         dfb["compte"] = dfb["compte"].apply(normalize_budget_account)
+
         st.session_state.df_budget = dfb[["annee", "compte", "budget"]]
         st.success("Budget chargé")
 
 # ======================================================
-# STOP SI PAS DE DÉPENSES
+# STOP
 # ======================================================
 if st.session_state.df_depenses is None:
     st.stop()
@@ -74,93 +114,64 @@ df_dep = st.session_state.df_depenses
 df_budget = st.session_state.df_budget
 
 # ======================================================
-# NAVIGATION
+# ANALYSE — BUDGET VS RÉEL AVEC DÉTAIL
 # ======================================================
-with st.sidebar:
-    page = st.radio(
-        "Vue",
-        ["📊 État des dépenses", "📊 Budget vs Réel – Analyse"]
-    )
+st.markdown("## 📊 Analyse Budget vs Réel")
 
-# ======================================================
-# 📊 ONGLET — BUDGET VS RÉEL AVEC ANALYSE
-# ======================================================
-if page == "📊 Budget vs Réel – Analyse":
+annee = st.selectbox("Année analysée", sorted(df_dep["annee"].unique()))
 
-    annee = st.selectbox("Année analysée", sorted(df_dep["annee"].unique()))
+dep = df_dep[df_dep["annee"] == annee].copy()
+bud = df_budget[df_budget["annee"] == annee].copy()
 
-    dep = df_dep[df_dep["annee"] == annee].copy()
-    bud = df_budget[df_budget["annee"] == annee].copy()
+if bud.empty:
+    st.warning("Aucun budget pour cette année.")
+    st.stop()
 
-    if bud.empty:
-        st.warning("Aucun budget pour cette année.")
-        st.stop()
+cles_budget = sorted(bud["compte"].unique(), key=len, reverse=True)
 
-    # Clés budgétaires
-    cles_budget = sorted(bud["compte"].unique(), key=len, reverse=True)
+def map_budget(compte):
+    for cle in cles_budget:
+        if compte.startswith(cle):
+            return cle
+    return "NON BUDGETE"
 
-    def map_budget(compte_reel):
-        for cle in cles_budget:
-            if compte_reel.startswith(cle):
-                return cle
-        return "NON BUDGÉTÉ"
+dep["compte_budget"] = dep["compte"].apply(map_budget)
 
-    dep["compte_budget"] = dep["compte"].apply(map_budget)
+# ---- Vue macro
+reel_macro = dep.groupby("compte_budget")["montant_ttc"].sum().reset_index(name="reel")
 
-    # ===== Vue macro Budget vs Réel
-    reel_macro = (
-        dep.groupby("compte_budget")["montant_ttc"]
-        .sum()
-        .reset_index(name="reel")
-    )
+macro = bud.merge(
+    reel_macro,
+    left_on="compte",
+    right_on="compte_budget",
+    how="left"
+)
 
-    macro = bud.merge(
-        reel_macro,
-        left_on="compte",
-        right_on="compte_budget",
-        how="left"
-    )
+macro["reel"] = macro["reel"].fillna(0)
+macro["ecart_eur"] = macro["reel"] - macro["budget"]
+macro["ecart_pct"] = macro["ecart_eur"] / macro["budget"] * 100
 
-    macro["reel"] = macro["reel"].fillna(0)
-    macro["ecart_eur"] = macro["reel"] - macro["budget"]
-    macro["ecart_pct"] = macro["ecart_eur"] / macro["budget"] * 100
+st.dataframe(
+    macro[["compte", "budget", "reel", "ecart_eur", "ecart_pct"]],
+    use_container_width=True
+)
 
-    st.markdown("## 📌 Synthèse Budget vs Réel")
-    st.dataframe(
-        macro[["compte", "budget", "reel", "ecart_eur", "ecart_pct"]],
-        use_container_width=True
-    )
+# ---- Drill-down
+st.markdown("## 🔍 Détail par compte")
 
-    # ===== Sélection du compte à analyser
-    st.markdown("## 🔍 Analyse détaillée d’un compte budgété")
+compte_sel = st.selectbox("Compte budgété", macro["compte"].tolist())
 
-    compte_sel = st.selectbox(
-        "Compte budgétaire",
-        macro["compte"].tolist()
-    )
+ligne = macro[macro["compte"] == compte_sel].iloc[0]
 
-    ligne = macro[macro["compte"] == compte_sel].iloc[0]
+detail = (
+    dep[dep["compte_budget"] == compte_sel]
+    .groupby("compte")["montant_ttc"]
+    .sum()
+    .reset_index()
+    .sort_values("montant_ttc", ascending=False)
+)
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Budget (€)", f"{ligne['budget']:,.2f}".replace(",", " "))
-    col2.metric("Réel (€)", f"{ligne['reel']:,.2f}".replace(",", " "))
-    col3.metric(
-        "Écart (%)",
-        f"{ligne['ecart_pct']:.1f} %"
-    )
+detail["% du budget"] = detail["montant_ttc"] / ligne["budget"] * 100
+detail["% du reel"] = detail["montant_ttc"] / ligne["reel"] * 100 if ligne["reel"] != 0 else 0
 
-    # ===== Détail par comptes réels
-    st.markdown("### 📂 Détail par comptes réels")
-
-    detail = (
-        dep[dep["compte_budget"] == compte_sel]
-        .groupby("compte")["montant_ttc"]
-        .sum()
-        .reset_index()
-        .sort_values("montant_ttc", ascending=False)
-    )
-
-    detail["% du budget"] = detail["montant_ttc"] / ligne["budget"] * 100
-    detail["% du réel"] = detail["montant_ttc"] / ligne["reel"] * 100
-
-    st.dataframe(detail, use_container_width=True)
+st.dataframe(detail, use_container_width=True)
