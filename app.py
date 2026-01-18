@@ -23,6 +23,19 @@ if "df_budget" not in st.session_state:
     )
 
 # =========================
+# OUTILS
+# =========================
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalise systématiquement les noms de colonnes"""
+    return df.rename(columns={
+        "Année": "annee",
+        "Compte": "compte",
+        "Montant TTC": "montant_ttc",
+        "Montant": "montant_ttc",
+        "Budget": "budget"
+    })
+
+# =========================
 # IMPORT DEPENSES
 # =========================
 st.markdown("## 📥 Import des dépenses")
@@ -32,16 +45,17 @@ uploaded_csv = st.file_uploader("Base des dépenses (CSV)", type=["csv"])
 if uploaded_csv:
     df = pd.read_csv(uploaded_csv, sep=None, engine="python")
     df.columns = [c.strip().replace("\ufeff", "") for c in df.columns]
+    df = normalize_columns(df)
 
-    df = df.rename(columns={
-        "Année": "annee",
-        "Montant TTC": "montant_ttc"
-    })
+    required = ["annee", "compte", "montant_ttc"]
+    missing = [c for c in required if c not in df.columns]
 
-    df["Compte"] = df["Compte"].astype(str)
-
-    st.session_state.df_factures = df
-    st.success("Dépenses chargées")
+    if missing:
+        st.error(f"Colonnes manquantes : {', '.join(missing)}")
+    else:
+        df["compte"] = df["compte"].astype(str)
+        st.session_state.df_factures = df
+        st.success("Dépenses chargées")
 
 # =========================
 # STOP
@@ -49,9 +63,12 @@ if uploaded_csv:
 if st.session_state.df_factures is None:
     st.stop()
 
-df = st.session_state.df_factures
+df = st.session_state.df_factures.copy()
 
-annees = sorted(df["annee"].unique())
+# =========================
+# FILTRE ANNÉE
+# =========================
+annees = sorted(df["annee"].dropna().unique())
 annee_sel = st.selectbox("Exercice", annees)
 
 df_annee = df[df["annee"] == annee_sel].copy()
@@ -66,42 +83,42 @@ uploaded_budget = st.file_uploader("Budget (CSV)", type=["csv"], key="budget")
 if uploaded_budget:
     df_budget = pd.read_csv(uploaded_budget, sep=None, engine="python")
     df_budget.columns = [c.strip().replace("\ufeff", "") for c in df_budget.columns]
+    df_budget = normalize_columns(df_budget)
 
-    df_budget = df_budget.rename(columns={
-        "Année": "annee",
-        "Compte": "compte",
-        "Budget": "budget"
-    })
+    required = ["annee", "compte", "budget"]
+    missing = [c for c in required if c not in df_budget.columns]
 
-    df_budget["compte"] = df_budget["compte"].astype(str)
+    if missing:
+        st.error(f"Colonnes budget manquantes : {', '.join(missing)}")
+    else:
+        df_budget["compte"] = df_budget["compte"].astype(str)
+        st.session_state.df_budget = df_budget
+        st.success("Budget chargé")
 
-    st.session_state.df_budget = df_budget
-    st.success("Budget chargé")
-
-df_budget = st.session_state.df_budget
+df_budget = st.session_state.df_budget.copy()
 
 # =========================
-# BUDGET VS REEL (ROBUSTE)
+# BUDGET vs REEL (ROBUSTE)
 # =========================
 if not df_budget.empty:
     st.markdown("## 📊 Budget vs Réel")
 
     budget_annee = df_budget[df_budget["annee"] == annee_sel].copy()
 
-    # Liste des clés budgétaires triées par longueur décroissante
+    # clés budgétaires (3 ou 4 chiffres) triées par longueur décroissante
     cles_budget = sorted(
         budget_annee["compte"].unique(),
         key=len,
         reverse=True
     )
 
-    def map_cle(compte):
+    def map_cle_budget(compte: str):
         for cle in cles_budget:
             if compte.startswith(cle):
                 return cle
-        return None
+        return "NON BUDGÉTÉ"
 
-    df_annee["cle_budget"] = df_annee["Compte"].apply(map_cle)
+    df_annee["cle_budget"] = df_annee["compte"].apply(map_cle_budget)
 
     reel = (
         df_annee.groupby("cle_budget", dropna=False)["montant_ttc"]
@@ -117,15 +134,17 @@ if not df_budget.empty:
         how="left"
     )
 
+    comp["budget"] = comp["budget"].fillna(0)
     comp["ecart_eur"] = comp["reel"] - comp["budget"]
-    comp["ecart_pct"] = (comp["ecart_eur"] / comp["budget"]) * 100
+    comp["ecart_pct"] = comp.apply(
+        lambda r: (r["ecart_eur"] / r["budget"] * 100) if r["budget"] != 0 else None,
+        axis=1
+    )
 
-    # Colonnes garanties
-    comp_aff = comp[
-        ["cle_budget", "reel", "budget", "ecart_eur", "ecart_pct"]
-    ]
-
-    st.dataframe(comp_aff, use_container_width=True)
+    st.dataframe(
+        comp[["cle_budget", "reel", "budget", "ecart_eur", "ecart_pct"]],
+        use_container_width=True
+    )
 
 # =========================
 # FOOTER
