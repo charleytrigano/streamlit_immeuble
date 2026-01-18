@@ -10,10 +10,7 @@ st.title("Pilotage des charges de l’immeuble")
 # ======================================================
 # OUTILS
 # ======================================================
-def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Nettoie et normalise les noms de colonnes de façon défensive
-    """
+def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = (
         df.columns
         .str.strip()
@@ -24,28 +21,16 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
         .str.replace("à", "a")
         .str.replace(" ", "_")
     )
-
-    rename_map = {
+    return df.rename(columns={
         "annee": "annee",
-        "annees": "annee",
-        "an": "annee",
         "compte": "compte",
         "montant_ttc": "montant_ttc",
         "montant": "montant_ttc",
         "budget": "budget",
         "fournisseur": "fournisseur",
-    }
-
-    df = df.rename(columns={c: rename_map[c] for c in df.columns if c in rename_map})
-    return df
-
+    })
 
 def normalize_budget_account(compte: str) -> str:
-    """
-    Règle comptable :
-    - 621x / 622x → 4 chiffres
-    - autres → 3 chiffres
-    """
     compte = str(compte)
     if compte.startswith(("621", "622")):
         return compte[:4]
@@ -72,17 +57,16 @@ with st.sidebar:
     # ---------- Dépenses ----------
     if dep_csv:
         df = pd.read_csv(dep_csv, sep=None, engine="python")
-        df = clean_columns(df)
+        df = normalize_columns(df)
 
         if "annee" not in df.columns:
-            st.error("Colonne ANNEE introuvable dans le fichier des dépenses.")
+            st.error(
+                f"Colonnes détectées : {', '.join(df.columns)}\n\n"
+                "Impossible d’identifier la colonne Année."
+            )
             st.stop()
 
-        if "compte" not in df.columns or "montant_ttc" not in df.columns:
-            st.error("Colonnes COMPTE ou MONTANT_TTC manquantes.")
-            st.stop()
-
-        df["annee"] = df["annee"].astype(int)
+        df["annee"] = df["annee"].astype(float).astype(int)
         df["compte"] = df["compte"].astype(str)
 
         st.session_state.df_depenses = df
@@ -91,13 +75,16 @@ with st.sidebar:
     # ---------- Budget ----------
     if bud_csv:
         dfb = pd.read_csv(bud_csv, sep=None, engine="python")
-        dfb = clean_columns(dfb)
+        dfb = normalize_columns(dfb)
 
         if not {"annee", "compte", "budget"}.issubset(dfb.columns):
-            st.error("Le budget doit contenir : annee, compte, budget.")
+            st.error(
+                f"Colonnes détectées : {', '.join(dfb.columns)}\n\n"
+                "Le budget doit contenir : annee, compte, budget."
+            )
             st.stop()
 
-        dfb["annee"] = dfb["annee"].astype(int)
+        dfb["annee"] = dfb["annee"].astype(float).astype(int)
         dfb["compte"] = dfb["compte"].astype(str)
         dfb["compte"] = dfb["compte"].apply(normalize_budget_account)
 
@@ -171,7 +158,9 @@ detail = (
     .sort_values("montant_ttc", ascending=False)
 )
 
-detail["% du budget"] = detail["montant_ttc"] / ligne["budget"] * 100
-detail["% du reel"] = detail["montant_ttc"] / ligne["reel"] * 100 if ligne["reel"] != 0 else 0
+detail["% du budget"] = detail["montant_ttc"] / ligne["budget"]
+detail["% du reel"] = (
+    detail["montant_ttc"] / ligne["reel"] if ligne["reel"] != 0 else 0
+)
 
 st.dataframe(detail, use_container_width=True)
