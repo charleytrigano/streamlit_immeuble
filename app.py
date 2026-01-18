@@ -1,40 +1,109 @@
 import streamlit as st
 import pandas as pd
+
 from utils.analyse import analyse_pdfs
+from utils.graphs import (
+    plot_charges_par_poste,
+    plot_pareto_postes,
+    plot_top_fournisseurs,
+    plot_recurrent_vs_ponctuel
+)
 
-st.set_page_config(page_title="Analyse charges immeuble", layout="wide")
+# -------------------------------------------------
+# CONFIG STREAMLIT
+# -------------------------------------------------
+st.set_page_config(
+    page_title="Analyse des charges de l'immeuble",
+    layout="wide"
+)
 
-st.title("Analyse facture par facture – Immeuble")
+st.title("Analyse facture par facture – Gestion de l’immeuble")
+st.markdown(
+    """
+    Cette application permet d’analyser **facture par facture** les charges de l’immeuble,
+    afin d’identifier les **postes coûteux**, les **prestataires dominants** et les
+    **leviers de réduction des frais**.
+    """
+)
 
-annee = st.number_input("Année analysée", value=2025, step=1)
+# -------------------------------------------------
+# PARAMÈTRES GÉNÉRAUX
+# -------------------------------------------------
+st.sidebar.header("Paramètres")
 
-st.markdown("### Upload des factures par compte")
+annee = st.sidebar.number_input(
+    "Année analysée",
+    value=2025,
+    step=1
+)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown(
+    """
+    **Mode d’utilisation**
+    1. Indiquez les comptes comptables  
+    2. Uploadez les factures PDF par compte  
+    3. Lancez l’analyse  
+    """
+)
+
+# -------------------------------------------------
+# SAISIE DES COMPTES
+# -------------------------------------------------
+st.markdown("## 1️⃣ Comptes comptables")
+
+comptes = st.text_area(
+    "Liste des comptes (1 par ligne — noms EXACTS des dossiers)",
+    height=150,
+    placeholder="Entretien plomberie\nContrat entretien ascenseur\nEau\nAssurances"
+)
+
+liste_comptes = [c.strip() for c in comptes.splitlines() if c.strip()]
+
+# -------------------------------------------------
+# UPLOAD DES FACTURES
+# -------------------------------------------------
+st.markdown("## 2️⃣ Upload des factures PDF")
 
 structure = {}
 
-comptes = st.text_area(
-    "Liste des comptes (1 par ligne, noms exacts des dossiers)",
-    "Entretien plomberie\nContrat entretien ascenseur\nEau"
-).splitlines()
-
-for compte in comptes:
-    if compte.strip():
-        files = st.file_uploader(
-            f"Factures PDF – {compte}",
+if liste_comptes:
+    for compte in liste_comptes:
+        fichiers = st.file_uploader(
+            f"📂 {compte}",
             type="pdf",
-            accept_multiple_files=True
+            accept_multiple_files=True,
+            key=compte
         )
-        if files:
-            structure[compte] = files
+        if fichiers:
+            structure[compte] = fichiers
+else:
+    st.info("Veuillez saisir au moins un compte comptable.")
 
-if st.button("Lancer l'analyse"):
+# -------------------------------------------------
+# LANCEMENT DE L’ANALYSE
+# -------------------------------------------------
+st.markdown("## 3️⃣ Lancer l’analyse")
+
+if st.button("🚀 Analyser les factures"):
     if not structure:
-        st.warning("Veuillez uploader au moins un dossier de factures.")
+        st.warning("Aucune facture PDF n’a été uploadée.")
     else:
-        df = analyse_pdfs(structure, annee)
+        with st.spinner("Analyse des factures en cours..."):
+            df = analyse_pdfs(structure, annee)
 
         st.success("Analyse terminée")
+
+        # -------------------------------------------------
+        # TABLE FACTURES
+        # -------------------------------------------------
+        st.markdown("## 📄 Détail des factures")
         st.dataframe(df, use_container_width=True)
+
+        # -------------------------------------------------
+        # SYNTHÈSE PAR POSTE
+        # -------------------------------------------------
+        st.markdown("## 📊 Synthèse par poste")
 
         synthese = (
             df.groupby(["Compte", "Poste"])
@@ -44,20 +113,14 @@ if st.button("Lancer l'analyse"):
                   Nb_Fournisseurs=("Fournisseur", "nunique")
               )
               .reset_index()
+              .sort_values("Montant_Total", ascending=False)
         )
 
-        st.markdown("### Synthèse par poste")
         st.dataframe(synthese, use_container_width=True)
 
-        output = "analyse_factures.xlsx"
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, sheet_name="Factures", index=False)
-            synthese.to_excel(writer, sheet_name="Synthese", index=False)
+        # -------------------------------------------------
+        # FILTRES GRAPHIQUES
+        # -------------------------------------------------
+        st.markdown("## 🔍 Filtres d’analyse")
 
-        with open(output, "rb") as f:
-            st.download_button(
-                "Télécharger l'analyse Excel",
-                f,
-                file_name=output
-            )
-
+        col1, col2 = st.columns(2)
