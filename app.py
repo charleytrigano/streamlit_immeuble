@@ -2,25 +2,6 @@ import streamlit as st
 import pandas as pd
 
 # =========================
-# IMPORTS MÉTIERS
-# =========================
-from utils.analyse import analyse_pdfs
-from utils.graphs import (
-    plot_charges_par_poste,
-    plot_pareto_postes,
-    plot_top_fournisseurs,
-    plot_recurrent_vs_ponctuel
-)
-from utils.budget import load_budget
-from utils.budget_analysis import analyse_budget_vs_reel
-from utils.graphs_budget import plot_budget_vs_reel
-from utils.pluriannuel import aggregate_pluriannuel, compute_trends
-from utils.graphs_pluri import plot_trend_par_poste, plot_global_trends
-from utils.projection import project_baseline, apply_scenario
-from utils.graphs_projection import plot_projection
-from utils.report_ag import generate_ag_report
-
-# =========================
 # CONFIG STREAMLIT
 # =========================
 st.set_page_config(
@@ -28,312 +9,195 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("Pilotage stratégique des charges de l’immeuble")
+st.title("Pilotage des charges de l’immeuble")
 st.markdown(
     """
-    Outil complet d’aide à la décision pour le **conseil syndical**, le **syndic**
-    et les **copropriétaires**.
+    Analyse des charges à partir d’une **base CSV unique**  
+    destinée au **conseil syndical** et aux **copropriétaires**.
     """
 )
 
 # =========================
 # SESSION STATE
 # =========================
-if "historique" not in st.session_state:
-    st.session_state.historique = []
+if "df_factures" not in st.session_state:
+    st.session_state.df_factures = None
 
 # =========================
-# SIDEBAR
+# MODE COPROPRIÉTAIRE
 # =========================
-st.sidebar.header("Paramètres")
-annee = st.sidebar.number_input("Année analysée", value=2025, step=1)
-
-# =========================
-# 1️⃣ COMPTES COMPTABLES
-# =========================
-st.markdown("## 1️⃣ Comptes comptables")
-
-comptes_text = st.text_area(
-    "Un compte par ligne (nom EXACT du dossier)",
-    height=150,
-    placeholder="Entretien plomberie\nContrat entretien ascenseur\nEau\nAssurances"
+mode_copro = st.toggle(
+    "Mode copropriétaire (lecture simplifiée)",
+    value=False
 )
 
-comptes = [c.strip() for c in comptes_text.splitlines() if c.strip()]
-
 # =========================
-# 2️⃣ UPLOAD FACTURES PDF
+# IMPORT BASE CSV
 # =========================
-st.markdown("## 2️⃣ Upload des factures PDF")
+st.markdown("## 📥 Import de la base des dépenses (CSV)")
 
-structure = {}
-
-if comptes:
-    for compte in comptes:
-        files = st.file_uploader(
-            f"📂 {compte}",
-            type="pdf",
-            accept_multiple_files=True,
-            key=f"{compte}_{annee}"
-        )
-        if files:
-            structure[compte] = files
-else:
-    st.info("Veuillez saisir au moins un compte comptable.")
-
-# =========================
-# 3️⃣ ANALYSE ANNUELLE
-# =========================
-st.markdown("## 3️⃣ Analyse annuelle")
-
-df = None
-synthese = None
-
-if st.button("🚀 Lancer l’analyse annuelle"):
-    if not structure:
-        st.warning("Aucune facture PDF fournie.")
-    else:
-        with st.spinner("Analyse des factures en cours…"):
-            df = analyse_pdfs(structure, annee)
-
-        st.session_state.historique.append(df)
-        st.success(f"Analyse {annee} terminée")
-
-        st.markdown("### 📄 Factures")
-        st.dataframe(df, use_container_width=True)
-
-        st.markdown("### 📊 Synthèse par poste")
-        synthese = (
-            df.groupby(["Compte", "Poste"])
-            .agg(
-                Montant_Total=("Montant TTC", "sum"),
-                Nb_Factures=("Fichier", "count"),
-                Nb_Fournisseurs=("Fournisseur", "nunique")
-            )
-            .reset_index()
-            .sort_values("Montant_Total", ascending=False)
-        )
-        st.dataframe(synthese, use_container_width=True)
-
-        st.markdown("### 📈 Analyses graphiques")
-        plot_charges_par_poste(df)
-        plot_pareto_postes(df)
-        plot_top_fournisseurs(df)
-        plot_recurrent_vs_ponctuel(df)
-
-# =========================
-# 4️⃣ BUDGET VS RÉEL
-# =========================
-st.markdown("## 4️⃣ Budget voté vs Réel")
-
-df_bvr = None
-
-budget_file = st.file_uploader(
-    "Uploader le budget voté (Excel)",
-    type=["xlsx"]
+uploaded_csv = st.file_uploader(
+    "Importer la base CSV (depuis Dropbox)",
+    type=["csv"]
 )
 
-if budget_file and st.session_state.historique:
+if uploaded_csv:
     try:
-        df_budget = load_budget(budget_file)
-        df_latest = st.session_state.historique[-1]
-        df_bvr = analyse_budget_vs_reel(df_latest, df_budget)
+        df = pd.read_csv(uploaded_csv, sep=None, engine="python")
+        df.columns = [c.strip().replace("\ufeff", "") for c in df.columns]
 
-        st.dataframe(df_bvr, use_container_width=True)
-        plot_budget_vs_reel(df_bvr)
+        # Vérification minimale
+        required_cols = [
+            "Année", "Compte", "Poste", "Fournisseur",
+            "Date", "Montant TTC"
+        ]
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            st.error(f"Colonnes manquantes : {', '.join(missing)}")
+        else:
+            st.session_state.df_factures = df
+            st.success("Base CSV chargée avec succès")
+
     except Exception as e:
-        st.error(str(e))
+        st.error(f"Erreur de lecture du CSV : {e}")
 
 # =========================
-# 5️⃣ ANALYSE PLURIANNUELLE
+# ARRÊT SI PAS DE DONNÉES
 # =========================
-st.markdown("## 5️⃣ Analyse pluriannuelle")
+if st.session_state.df_factures is None:
+    st.info("Veuillez importer une base CSV pour démarrer.")
+    st.stop()
 
-df_pluri = None
-df_trends = None
+df = st.session_state.df_factures
 
-if len(st.session_state.historique) >= 2:
-    df_pluri = aggregate_pluriannuel(st.session_state.historique)
-    df_trends = compute_trends(df_pluri)
+# =========================
+# FILTRE ANNÉE
+# =========================
+annees = sorted(df["Année"].dropna().unique())
+annee_sel = st.selectbox("Exercice analysé", annees)
 
-    st.dataframe(df_trends, use_container_width=True)
-    plot_global_trends(df_pluri)
+df_annee = df[df["Année"] == annee_sel]
+
+# =========================
+# SYNTHÈSE PAR POSTE (COMMUNE)
+# =========================
+st.markdown("## 📊 Synthèse des charges par poste")
+
+synthese = (
+    df_annee.groupby("Poste")["Montant TTC"]
+    .sum()
+    .reset_index()
+    .sort_values("Montant TTC", ascending=False)
+)
+
+st.dataframe(synthese, use_container_width=True)
+
+total = synthese["Montant TTC"].sum()
+top_poste = synthese.iloc[0]
+
+st.info(
+    f"Le poste **{top_poste['Poste']}** représente "
+    f"{top_poste['Montant TTC'] / total * 100:.1f} % "
+    f"des charges totales de l’exercice."
+)
+
+# =========================
+# GRAPHIQUE SIMPLE (COPRO)
+# =========================
+st.markdown("### Répartition des charges")
+st.bar_chart(
+    synthese.set_index("Poste")["Montant TTC"]
+)
+
+# =========================
+# DÉTAILS CONSEIL SYNDICAL
+# =========================
+if not mode_copro:
+    st.markdown("## 🔍 Analyse détaillée (conseil syndical)")
+
+    # Détail par fournisseur
+    st.markdown("### Charges par fournisseur")
+    fournisseurs = (
+        df_annee.groupby("Fournisseur")["Montant TTC"]
+        .sum()
+        .reset_index()
+        .sort_values("Montant TTC", ascending=False)
+    )
+    st.dataframe(fournisseurs, use_container_width=True)
+
+    # Fréquence des factures
+    st.markdown("### Fréquence des factures")
+    freq = (
+        df_annee.groupby("Poste")
+        .size()
+        .reset_index(name="Nombre de factures")
+        .sort_values("Nombre de factures", ascending=False)
+    )
+    st.dataframe(freq, use_container_width=True)
+
+    # Détail brut
+    st.markdown("### Détail facture par facture")
+    st.dataframe(df_annee, use_container_width=True)
+
+# =========================
+# PLURIANNUEL (SI DISPONIBLE)
+# =========================
+if df["Année"].nunique() >= 2:
+    st.markdown("## 📈 Évolution pluriannuelle")
+
+    evol = (
+        df.groupby(["Année", "Poste"])["Montant TTC"]
+        .sum()
+        .reset_index()
+    )
 
     poste_sel = st.selectbox(
-        "Évolution par poste",
-        sorted(df_pluri["Poste"].unique())
-    )
-    plot_trend_par_poste(df_pluri, poste_sel)
-else:
-    st.info("Analysez au moins deux années pour activer le pluriannuel.")
-
-# =========================
-# 6️⃣ PROJECTION & SCÉNARIOS
-# =========================
-st.markdown("## 6️⃣ Projection & scénarios")
-
-df_proj_all = None
-economie = None
-
-if df_trends is not None:
-    annee_ref = int(df_trends["Année"].max())
-    df_proj_base = project_baseline(df_trends, annee_ref)
-
-    st.markdown("### 🎯 Hypothèses de réduction")
-    reductions = {}
-
-    for poste in sorted(df_proj_base["Poste"].unique()):
-        taux = st.slider(f"{poste} – réduction (%)", 0, 40, 0, 5)
-        if taux > 0:
-            reductions[poste] = taux
-
-    df_proj_scen = apply_scenario(df_proj_base, reductions)
-    df_proj_all = pd.concat([df_proj_base, df_proj_scen])
-
-    plot_projection(df_proj_all)
-
-    economie = (
-        df_proj_base.groupby("Année")["Montant_Projeté"].sum()
-        - df_proj_scen.groupby("Année")["Montant_Projeté"].sum()
-    ).sum()
-
-    st.success(f"💡 Économie cumulée estimée : {economie:,.0f} €")
-
-# =========================
-# 7️⃣ RAPPORT AG PDF
-# =========================
-st.markdown("## 7️⃣ Rapport AG (PDF)")
-
-if st.session_state.historique:
-    if st.button("📄 Générer le rapport AG (PDF)"):
-        df_latest = st.session_state.historique[-1]
-
-        synthese_poste = (
-            df_latest.groupby("Poste")
-            .agg(
-                Montant_Total=("Montant TTC", "sum"),
-                Nb_Factures=("Fichier", "count"),
-                Nb_Fournisseurs=("Fournisseur", "nunique")
-            )
-            .reset_index()
-            .sort_values("Montant_Total", ascending=False)
-        )
-
-        pdf_path = f"rapport_AG_{annee}.pdf"
-
-        generate_ag_report(
-            filepath=pdf_path,
-            annee=annee,
-            synthese_poste=synthese_poste,
-            budget_vs_reel=df_bvr,
-            pluriannuel=df_trends,
-            projection=df_proj_all,
-            economie=economie
-        )
-
-        with open(pdf_path, "rb") as f:
-            st.download_button(
-                "📥 Télécharger le rapport AG (PDF)",
-                f,
-                file_name=pdf_path,
-                mime="application/pdf"
-            )
-
-# =========================
-# 8️⃣ BASE COMPLÈTE DES DÉPENSES (XLSX)
-# =========================
-st.markdown("## 📦 Base complète des dépenses (Excel)")
-
-if st.session_state.historique:
-    df_all = pd.concat(st.session_state.historique, ignore_index=True)
-
-    df_all = df_all.sort_values(
-        ["Année", "Compte", "Poste", "Fournisseur"]
+        "Poste analysé",
+        sorted(evol["Poste"].unique())
     )
 
-    master_file = "base_complete_depenses.xlsx"
-
-    with pd.ExcelWriter(master_file, engine="openpyxl") as writer:
-        df_all.to_excel(writer, sheet_name="Factures", index=False)
-
-    with open(master_file, "rb") as f:
-        st.download_button(
-            "📥 Télécharger la base complète des dépenses (XLSX)",
-            f,
-            file_name=master_file,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-else:
-    st.info("Analysez au moins une année pour générer la base complète.")
+    evol_poste = evol[evol["Poste"] == poste_sel]
+    st.line_chart(
+        evol_poste.set_index("Année")["Montant TTC"]
+    )
 
 # =========================
-# A️⃣ CRÉATION BASE EXCEL VIERGE
+# CONCLUSION PÉDAGOGIQUE (COPRO)
 # =========================
-st.markdown("## 🆕 Créer une base Excel vierge")
+if mode_copro:
+    st.markdown("## 📝 Message de synthèse")
 
-st.markdown(
-    "Cette base constitue le **référentiel de travail**. "
-    "Elle est volontairement **vide** et destinée à être complétée manuellement."
-)
+    part_top3 = (
+        synthese.head(3)["Montant TTC"].sum() / total * 100
+    )
 
-if st.button("🆕 Créer la base Excel vierge"):
-    # Onglet Factures
-    df_factures = pd.DataFrame(columns=[
-        "Année",
-        "Compte",
-        "Poste",
-        "Fournisseur",
-        "Date",
-        "Montant TTC",
-        "Type",
-        "Récurrent",
-        "Commentaire"
-    ])
+    st.success(
+        f"Les **3 principaux postes de charges** représentent "
+        f"{part_top3:.1f} % des dépenses totales. "
+        "Les actions proposées ciblent prioritairement ces postes."
+    )
 
-    # Onglet Pilotage
-    df_pilotage = pd.DataFrame(columns=[
-        "Poste",
-        "Décision CS",
-        "Action",
-        "Priorité",
-        "Commentaire"
-    ])
+# =========================
+# EXPORT CSV FILTRÉ
+# =========================
+if not mode_copro:
+    st.markdown("## 📤 Export")
 
-    # Onglet Hypothèses
-    df_hypotheses = pd.DataFrame(columns=[
-        "Poste",
-        "Réduction cible (%)",
-        "Commentaire"
-    ])
+    export_file = f"depenses_{annee_sel}.csv"
+    df_annee.to_csv(export_file, index=False, encoding="utf-8")
 
-    # Onglet Paramètres
-    df_parametres = pd.DataFrame({
-        "Clé": ["Immeuble", "Syndic", "Exercice de référence"],
-        "Valeur": ["", "", ""]
-    })
-
-    base_file = "base_depenses_immeuble.xlsx"
-
-    with pd.ExcelWriter(base_file, engine="openpyxl") as writer:
-        df_factures.to_excel(writer, sheet_name="Factures", index=False)
-        df_pilotage.to_excel(writer, sheet_name="Pilotage", index=False)
-        df_hypotheses.to_excel(writer, sheet_name="Hypothèses", index=False)
-        df_parametres.to_excel(writer, sheet_name="Paramètres", index=False)
-
-    with open(base_file, "rb") as f:
+    with open(export_file, "rb") as f:
         st.download_button(
-            "📥 Télécharger la base Excel vierge",
+            "📥 Télécharger les dépenses de l’année",
             f,
-            file_name=base_file,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            file_name=export_file,
+            mime="text/csv"
         )
-
-
 
 # =========================
 # FOOTER
 # =========================
 st.markdown("---")
 st.markdown(
-    "*Outil de pilotage des charges – Conseil syndical / Syndic / Copropriété*"
+    "*Application de pilotage des charges – usage conseil syndical / copropriété*"
 )
