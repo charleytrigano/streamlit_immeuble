@@ -13,7 +13,7 @@ st.title("Pilotage des charges de l’immeuble")
 st.markdown(
     """
     Pilotage budgétaire et analyse des charges  
-    **Budget suivi par comptes généraux (3 chiffres)**  
+    **Suivi budgétaire à granularité variable (3 ou 4 chiffres)**  
     Source unique : **CSV**
     """
 )
@@ -26,7 +26,7 @@ if "df_factures" not in st.session_state:
 
 if "df_budget" not in st.session_state:
     st.session_state.df_budget = pd.DataFrame(
-        columns=["annee", "compte", "compte_general", "budget"]
+        columns=["annee", "compte", "budget"]
     )
 
 # =========================
@@ -62,7 +62,6 @@ if uploaded_csv:
             st.error(f"Colonnes manquantes : {', '.join(missing)}")
         else:
             df["Compte"] = df["Compte"].astype(str)
-            df["compte_general"] = df["Compte"].str[:3]  # ✅ 3 chiffres
 
             df = df.rename(columns={
                 "Année": "annee",
@@ -106,42 +105,17 @@ if not mode_copro:
 
     df_autres = df[df["annee"] != annee_sel]
     df_final = pd.concat([df_autres, df_edit], ignore_index=True)
-
-    export_file = f"depenses_corrigees_{annee_sel}.csv"
-    df_final.to_csv(export_file, index=False, encoding="utf-8")
-
-    with open(export_file, "rb") as f:
-        st.download_button(
-            "📥 Télécharger les dépenses mises à jour",
-            f,
-            file_name=export_file
-        )
 else:
     df_final = df.copy()
-
-# =========================
-# SYNTHÈSE PAR POSTE
-# =========================
-st.markdown("## 📊 Synthèse par poste")
-
-synth_poste = (
-    df_final[df_final["annee"] == annee_sel]
-    .groupby("Poste")["montant_ttc"]
-    .sum()
-    .reset_index()
-    .sort_values("montant_ttc", ascending=False)
-)
-
-st.dataframe(synth_poste, use_container_width=True)
 
 # =========================
 # 💰 IMPORT & ÉDITION BUDGET
 # =========================
 if not mode_copro:
-    st.markdown("## 💰 Budget par comptes généraux")
+    st.markdown("## 💰 Budget (granularité libre)")
 
     uploaded_budget = st.file_uploader(
-        "Importer le budget",
+        "Importer le budget (CSV)",
         type=["csv"],
         key="budget"
     )
@@ -154,9 +128,10 @@ if not mode_copro:
             df_budget = df_budget.rename(columns={
                 "Année": "annee",
                 "Compte": "compte",
-                "Comptes généraux": "compte_general",
                 "Budget": "budget"
             })
+
+            df_budget["compte"] = df_budget["compte"].astype(str)
 
             st.session_state.df_budget = df_budget
             st.success("Budget chargé")
@@ -164,49 +139,50 @@ if not mode_copro:
         except Exception as e:
             st.error(f"Erreur budget : {e}")
 
-    df_budget = st.session_state.df_budget
-    df_budget_annee = df_budget[df_budget["annee"] == annee_sel]
-
-    df_budget_edit = st.data_editor(
-        df_budget_annee,
-        num_rows="dynamic",
-        use_container_width=True
-    )
-
-    df_budget_autres = df_budget[df_budget["annee"] != annee_sel]
-    df_budget_final = pd.concat(
-        [df_budget_autres, df_budget_edit],
-        ignore_index=True
-    )
-
-    st.session_state.df_budget = df_budget_final
+df_budget = st.session_state.df_budget
 
 # =========================
-# 📊 BUDGET vs RÉEL (3 chiffres)
+# 📊 BUDGET vs RÉEL (GRANULARITÉ DYNAMIQUE)
 # =========================
-if not mode_copro and not st.session_state.df_budget.empty:
-    st.markdown("## 📊 Budget vs Réel (comptes généraux)")
+if not mode_copro and not df_budget.empty:
+    st.markdown("## 📊 Budget vs Réel")
+
+    # Budget de l'année
+    budget_annee = df_budget[df_budget["annee"] == annee_sel].copy()
+
+    # Longueur de clé décidée par le budget
+    budget_annee["cle_budget"] = budget_annee["compte"]
+
+    # Application de la granularité aux dépenses
+    df_reel = df_final[df_final["annee"] == annee_sel].copy()
+    df_reel["cle_budget"] = df_reel.apply(
+        lambda r: r["Compte"][:len(budget_annee.loc[
+            budget_annee["compte"].str.startswith(r["Compte"][:3])
+        ]["compte"].iloc[0])]
+        if not budget_annee.empty else r["Compte"][:3],
+        axis=1
+    )
 
     reel = (
-        df_final[df_final["annee"] == annee_sel]
-        .groupby("compte_general")["montant_ttc"]
+        df_reel.groupby("cle_budget")["montant_ttc"]
         .sum()
         .reset_index()
     )
 
-    budget = st.session_state.df_budget
-    budget_annee = budget[budget["annee"] == annee_sel]
-
     comp = reel.merge(
         budget_annee,
-        on="compte_general",
+        left_on="cle_budget",
+        right_on="compte",
         how="left"
     )
 
     comp["écart (€)"] = comp["montant_ttc"] - comp["budget"]
     comp["écart (%)"] = (comp["écart (€)"] / comp["budget"]) * 100
 
-    st.dataframe(comp, use_container_width=True)
+    st.dataframe(
+        comp[["cle_budget", "montant_ttc", "budget", "écart (€)", "écart (%)"]],
+        use_container_width=True
+    )
 
 # =========================
 # FOOTER
