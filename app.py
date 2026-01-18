@@ -68,7 +68,6 @@ with st.sidebar:
 # STOP SI PAS DE DÉPENSES
 # ======================================================
 if st.session_state.df_depenses is None:
-    st.info("Veuillez charger le fichier des dépenses.")
     st.stop()
 
 df_dep = st.session_state.df_depenses
@@ -80,84 +79,24 @@ df_budget = st.session_state.df_budget
 with st.sidebar:
     page = st.radio(
         "Vue",
-        ["📊 État des dépenses", "💰 Budget", "📊 Budget vs Réel"]
+        ["📊 État des dépenses", "📊 Budget vs Réel – Analyse"]
     )
 
 # ======================================================
-# 📊 ÉTAT DES DÉPENSES
+# 📊 ONGLET — BUDGET VS RÉEL AVEC ANALYSE
 # ======================================================
-if page == "📊 État des dépenses":
+if page == "📊 Budget vs Réel – Analyse":
 
-    annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
-    df_a = df_dep[df_dep["annee"] == annee].copy()
+    annee = st.selectbox("Année analysée", sorted(df_dep["annee"].unique()))
 
-    total_dep = df_a["montant_ttc"].sum()
-
-    # KPI
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total dépenses (€)", f"{total_dep:,.2f}".replace(",", " "))
-    col2.metric("Nombre de lignes", len(df_a))
-    col3.metric("Nombre de fournisseurs", df_a["fournisseur"].nunique())
-
-    # Tableau détail
-    st.markdown("### Détail des dépenses")
-    st.dataframe(df_a, use_container_width=True)
-
-    # Tableau par groupes de comptes
-    st.markdown("### Dépenses par groupe de comptes")
-    df_a["groupe"] = df_a["compte"].str[:2]
-
-    grp = (
-        df_a.groupby("groupe")["montant_ttc"]
-        .sum()
-        .reset_index()
-        .sort_values("montant_ttc", ascending=False)
-    )
-    grp["% du total"] = grp["montant_ttc"] / total_dep * 100
-    st.dataframe(grp, use_container_width=True)
-
-# ======================================================
-# 💰 BUDGET
-# ======================================================
-if page == "💰 Budget":
-
-    annee_b = st.selectbox("Année budgétaire", sorted(df_dep["annee"].unique()))
-    dfb = df_budget[df_budget["annee"] == annee_b].copy()
-
-    # KPI Budget
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Budget total (€)", f"{dfb['budget'].sum():,.2f}".replace(",", " "))
-    col2.metric("Comptes budgétés", len(dfb))
-    col3.metric("Groupes couverts", dfb["compte"].str[:2].nunique())
-
-    st.markdown("### ✏️ Budget éditable")
-    df_edit = st.data_editor(dfb, num_rows="dynamic", use_container_width=True)
-
-    # 👉 L’ANNÉE ÉDITÉE EST SOURCE DE VÉRITÉ
-    df_budget_new = pd.concat(
-        [
-            df_budget[df_budget["annee"] != annee_b],
-            df_edit
-        ],
-        ignore_index=True
-    )
-    st.session_state.df_budget = df_budget_new
-
-# ======================================================
-# 📊 BUDGET VS RÉEL (CORRIGÉ DÉFINITIVEMENT)
-# ======================================================
-if page == "📊 Budget vs Réel":
-
-    annee_c = st.selectbox("Année analysée", sorted(df_dep["annee"].unique()))
-
-    dep = df_dep[df_dep["annee"] == annee_c].copy()
-    bud = df_budget[df_budget["annee"] == annee_c].copy()
+    dep = df_dep[df_dep["annee"] == annee].copy()
+    bud = df_budget[df_budget["annee"] == annee].copy()
 
     if bud.empty:
         st.warning("Aucun budget pour cette année.")
         st.stop()
 
-    # Clés budgétaires = SOURCE DE VÉRITÉ
+    # Clés budgétaires
     cles_budget = sorted(bud["compte"].unique(), key=len, reverse=True)
 
     def map_budget(compte_reel):
@@ -166,48 +105,62 @@ if page == "📊 Budget vs Réel":
                 return cle
         return "NON BUDGÉTÉ"
 
-    dep["cle_budget"] = dep["compte"].apply(map_budget)
+    dep["compte_budget"] = dep["compte"].apply(map_budget)
 
-    # Réel agrégé
-    reel = (
-        dep.groupby("cle_budget")["montant_ttc"]
+    # ===== Vue macro Budget vs Réel
+    reel_macro = (
+        dep.groupby("compte_budget")["montant_ttc"]
         .sum()
         .reset_index(name="reel")
     )
 
-    # 🔑 JOINTURE EN PARTANT DU BUDGET (CORRECTION CLÉ)
-    comp = bud.merge(
-        reel,
+    macro = bud.merge(
+        reel_macro,
         left_on="compte",
-        right_on="cle_budget",
+        right_on="compte_budget",
         how="left"
     )
 
-    comp["reel"] = comp["reel"].fillna(0)
-    comp["ecart_eur"] = comp["reel"] - comp["budget"]
-    comp["ecart_pct"] = comp.apply(
-        lambda r: (r["ecart_eur"] / r["budget"] * 100)
-        if r["budget"] != 0 else None,
-        axis=1
-    )
+    macro["reel"] = macro["reel"].fillna(0)
+    macro["ecart_eur"] = macro["reel"] - macro["budget"]
+    macro["ecart_pct"] = macro["ecart_eur"] / macro["budget"] * 100
 
-    # KPI Budget vs Réel
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total réel (€)", f"{comp['reel'].sum():,.2f}".replace(",", " "))
-    col2.metric("Total budget (€)", f"{comp['budget'].sum():,.2f}".replace(",", " "))
-    col3.metric("Écart global (€)", f"{comp['ecart_eur'].sum():,.2f}".replace(",", " "))
-    col4.metric(
-        "Postes en dépassement",
-        int((comp["ecart_eur"] > 0).sum())
-    )
-
+    st.markdown("## 📌 Synthèse Budget vs Réel")
     st.dataframe(
-        comp[["compte", "reel", "budget", "ecart_eur", "ecart_pct"]],
+        macro[["compte", "budget", "reel", "ecart_eur", "ecart_pct"]],
         use_container_width=True
     )
 
-# ======================================================
-# FOOTER
-# ======================================================
-st.markdown("---")
-st.caption("Outil de pilotage – Conseil syndical / Copropriété")
+    # ===== Sélection du compte à analyser
+    st.markdown("## 🔍 Analyse détaillée d’un compte budgété")
+
+    compte_sel = st.selectbox(
+        "Compte budgétaire",
+        macro["compte"].tolist()
+    )
+
+    ligne = macro[macro["compte"] == compte_sel].iloc[0]
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Budget (€)", f"{ligne['budget']:,.2f}".replace(",", " "))
+    col2.metric("Réel (€)", f"{ligne['reel']:,.2f}".replace(",", " "))
+    col3.metric(
+        "Écart (%)",
+        f"{ligne['ecart_pct']:.1f} %"
+    )
+
+    # ===== Détail par comptes réels
+    st.markdown("### 📂 Détail par comptes réels")
+
+    detail = (
+        dep[dep["compte_budget"] == compte_sel]
+        .groupby("compte")["montant_ttc"]
+        .sum()
+        .reset_index()
+        .sort_values("montant_ttc", ascending=False)
+    )
+
+    detail["% du budget"] = detail["montant_ttc"] / ligne["budget"] * 100
+    detail["% du réel"] = detail["montant_ttc"] / ligne["reel"] * 100
+
+    st.dataframe(detail, use_container_width=True)
