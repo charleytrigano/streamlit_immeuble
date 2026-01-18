@@ -8,50 +8,51 @@ st.set_page_config(page_title="Pilotage des charges", layout="wide")
 st.title("Pilotage des charges de l’immeuble")
 
 # ======================================================
-# OUTILS ROBUSTES
+# OUTILS
 # ======================================================
-def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    # nettoyage basique
-    df.columns = (
-        df.columns
-        .str.strip()
-        .str.lower()
-        .str.replace(" ", "_")
-        .str.replace("é", "e")
-        .str.replace("è", "e")
-        .str.replace("ê", "e")
-        .str.replace("à", "a")
-    )
+def normalize_depenses(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.rename(columns={
+        "Annee": "annee",
+        "Compte": "compte",
+        "Poste": "poste",
+        "Fournisseur": "fournisseur",
+        "Date": "date",
+        "Montant TTC": "montant_ttc",
+        "Type": "type",
+        "Recurrent": "recurrent",
+        "Commentaire": "commentaire",
+    })
 
-    # détection colonne année
-    for col in df.columns:
-        if col in ["annee", "année", "ann_e", "an", "year"]:
-            df = df.rename(columns={col: "annee"})
-            break
+    required = {"annee", "compte", "montant_ttc"}
+    if not required.issubset(df.columns):
+        raise ValueError(f"Colonnes manquantes : {required - set(df.columns)}")
 
-    # renommages standards
-    rename_map = {
-        "compte": "compte",
-        "montant_ttc": "montant_ttc",
-        "montant": "montant_ttc",
-        "budget": "budget",
-        "fournisseur": "fournisseur",
-        "date": "date",
-        "poste": "poste",
-        "commentaire": "commentaire",
-        "type": "type",
-        "r_current": "recurrent",
-    }
+    df["annee"] = df["annee"].astype(float).astype(int)
+    df["compte"] = df["compte"].astype(str)
 
-    df = df.rename(columns={c: rename_map[c] for c in df.columns if c in rename_map})
     return df
 
 
-def normalize_budget_account(compte: str) -> str:
-    compte = str(compte)
-    if compte.startswith(("621", "622")):
-        return compte[:4]
-    return compte[:3]
+def normalize_budget(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.rename(columns={
+        "Annee": "annee",
+        "compte": "compte",
+        "budget": "budget",
+    })
+
+    required = {"annee", "compte", "budget"}
+    if not required.issubset(df.columns):
+        raise ValueError(f"Colonnes manquantes : {required - set(df.columns)}")
+
+    df["annee"] = df["annee"].astype(float).astype(int)
+    df["compte"] = df["compte"].astype(str)
+
+    # Règle comptable
+    df["compte"] = df["compte"].apply(
+        lambda x: x[:4] if x.startswith(("621", "622")) else x[:3]
+    )
+
+    return df
 
 # ======================================================
 # SESSION STATE
@@ -60,7 +61,7 @@ if "df_depenses" not in st.session_state:
     st.session_state.df_depenses = None
 
 if "df_budget" not in st.session_state:
-    st.session_state.df_budget = pd.DataFrame(columns=["annee", "compte", "budget"])
+    st.session_state.df_budget = None
 
 # ======================================================
 # SIDEBAR — CHARGEMENT
@@ -71,54 +72,38 @@ with st.sidebar:
     dep_csv = st.file_uploader("Dépenses (CSV)", type="csv")
     bud_csv = st.file_uploader("Budget (CSV)", type="csv")
 
-    # ---------- Dépenses ----------
     if dep_csv:
-        df = pd.read_csv(dep_csv, sep=None, engine="python")
-        df = normalize_columns(df)
-
-        if "annee" not in df.columns:
-            st.error(
-                f"Colonnes détectées : {', '.join(df.columns)}\n\n"
-                "Impossible d’identifier la colonne Année."
-            )
+        try:
+            df = pd.read_csv(dep_csv)
+            df = normalize_depenses(df)
+            st.session_state.df_depenses = df
+            st.success("Dépenses chargées")
+        except Exception as e:
+            st.error(str(e))
             st.stop()
 
-        df["annee"] = df["annee"].astype(float).astype(int)
-        df["compte"] = df["compte"].astype(str)
-
-        st.session_state.df_depenses = df
-        st.success("Dépenses chargées")
-
-    # ---------- Budget ----------
     if bud_csv:
-        dfb = pd.read_csv(bud_csv, sep=None, engine="python")
-        dfb = normalize_columns(dfb)
-
-        if not {"annee", "compte", "budget"}.issubset(dfb.columns):
-            st.error(
-                f"Colonnes détectées : {', '.join(dfb.columns)}\n\n"
-                "Le budget doit contenir : annee, compte, budget."
-            )
+        try:
+            dfb = pd.read_csv(bud_csv)
+            dfb = normalize_budget(dfb)
+            st.session_state.df_budget = dfb
+            st.success("Budget chargé")
+        except Exception as e:
+            st.error(str(e))
             st.stop()
 
-        dfb["annee"] = dfb["annee"].astype(float).astype(int)
-        dfb["compte"] = dfb["compte"].astype(str)
-        dfb["compte"] = dfb["compte"].apply(normalize_budget_account)
-
-        st.session_state.df_budget = dfb[["annee", "compte", "budget"]]
-        st.success("Budget chargé")
-
 # ======================================================
-# STOP SI PAS DE DÉPENSES
+# STOP SI DONNÉES MANQUANTES
 # ======================================================
-if st.session_state.df_depenses is None:
+if st.session_state.df_depenses is None or st.session_state.df_budget is None:
+    st.info("Veuillez charger les dépenses et le budget.")
     st.stop()
 
 df_dep = st.session_state.df_depenses
 df_budget = st.session_state.df_budget
 
 # ======================================================
-# ANALYSE — BUDGET VS RÉEL AVEC DRILL-DOWN
+# ANALYSE — BUDGET VS RÉEL AVEC COMPARAISON DÉTAILLÉE
 # ======================================================
 st.markdown("## 📊 Analyse Budget vs Réel")
 
@@ -127,21 +112,18 @@ annee = st.selectbox("Année analysée", sorted(df_dep["annee"].unique()))
 dep = df_dep[df_dep["annee"] == annee].copy()
 bud = df_budget[df_budget["annee"] == annee].copy()
 
-if bud.empty:
-    st.warning("Aucun budget pour cette année.")
-    st.stop()
-
+# Clés budgétaires = source de vérité
 cles_budget = sorted(bud["compte"].unique(), key=len, reverse=True)
 
-def map_budget(compte):
+def map_budget(compte_reel):
     for cle in cles_budget:
-        if compte.startswith(cle):
+        if compte_reel.startswith(cle):
             return cle
-    return "NON BUDGETE"
+    return "NON BUDGETÉ"
 
 dep["compte_budget"] = dep["compte"].apply(map_budget)
 
-# ---- Vue macro
+# ===== Vue macro
 reel_macro = dep.groupby("compte_budget")["montant_ttc"].sum().reset_index(name="reel")
 
 macro = bud.merge(
@@ -160,7 +142,7 @@ st.dataframe(
     use_container_width=True
 )
 
-# ---- Drill-down
+# ===== Drill-down explicatif
 st.markdown("## 🔍 Détail par compte réel")
 
 compte_sel = st.selectbox("Compte budgété", macro["compte"].tolist())
@@ -176,7 +158,7 @@ detail = (
 )
 
 detail["% du budget"] = detail["montant_ttc"] / ligne["budget"] * 100
-detail["% du reel"] = (
+detail["% du réel"] = (
     detail["montant_ttc"] / ligne["reel"] * 100 if ligne["reel"] != 0 else 0
 )
 
