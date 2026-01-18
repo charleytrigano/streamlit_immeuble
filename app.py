@@ -31,13 +31,8 @@ st.set_page_config(
 st.title("Pilotage stratégique des charges de l’immeuble")
 st.markdown(
     """
-    Outil complet d’aide à la décision pour **conseil syndical**, **syndic**
-    et **copropriétaires** :
-    - analyse facture par facture  
-    - budget vs réel  
-    - tendances pluriannuelles  
-    - projections & scénarios  
-    - **rapport AG PDF automatique**
+    Outil complet d’aide à la décision pour le **conseil syndical**, le **syndic**
+    et les **copropriétaires**.
     """
 )
 
@@ -51,32 +46,15 @@ if "historique" not in st.session_state:
 # SIDEBAR
 # =========================
 st.sidebar.header("Paramètres")
-
-annee = st.sidebar.number_input(
-    "Année analysée",
-    value=2025,
-    step=1
-)
-
-st.sidebar.markdown(
-    """
-    **Étapes**
-    1. Comptes comptables  
-    2. Factures PDF  
-    3. Analyse annuelle  
-    4. Budget voté  
-    5. Projection  
-    6. Rapport AG PDF  
-    """
-)
+annee = st.sidebar.number_input("Année analysée", value=2025, step=1)
 
 # =========================
-# 1️⃣ COMPTES
+# 1️⃣ COMPTES COMPTABLES
 # =========================
 st.markdown("## 1️⃣ Comptes comptables")
 
 comptes_text = st.text_area(
-    "Un compte par ligne (noms EXACTS des dossiers)",
+    "Un compte par ligne (nom EXACT du dossier)",
     height=150,
     placeholder="Entretien plomberie\nContrat entretien ascenseur\nEau\nAssurances"
 )
@@ -84,7 +62,7 @@ comptes_text = st.text_area(
 comptes = [c.strip() for c in comptes_text.splitlines() if c.strip()]
 
 # =========================
-# 2️⃣ UPLOAD PDF
+# 2️⃣ UPLOAD FACTURES PDF
 # =========================
 st.markdown("## 2️⃣ Upload des factures PDF")
 
@@ -115,7 +93,7 @@ if st.button("🚀 Lancer l’analyse annuelle"):
     if not structure:
         st.warning("Aucune facture PDF fournie.")
     else:
-        with st.spinner("Analyse des factures en cours..."):
+        with st.spinner("Analyse des factures en cours…"):
             df = analyse_pdfs(structure, annee)
 
         st.session_state.historique.append(df)
@@ -163,12 +141,11 @@ if budget_file and st.session_state.historique:
 
         st.dataframe(df_bvr, use_container_width=True)
         plot_budget_vs_reel(df_bvr)
-
     except Exception as e:
         st.error(str(e))
 
 # =========================
-# 5️⃣ PLURIANNUEL
+# 5️⃣ ANALYSE PLURIANNUELLE
 # =========================
 st.markdown("## 5️⃣ Analyse pluriannuelle")
 
@@ -191,7 +168,7 @@ else:
     st.info("Analysez au moins deux années pour activer le pluriannuel.")
 
 # =========================
-# 6️⃣ V5 – PROJECTION
+# 6️⃣ PROJECTION & SCÉNARIOS
 # =========================
 st.markdown("## 6️⃣ Projection & scénarios")
 
@@ -202,14 +179,11 @@ if df_trends is not None:
     annee_ref = int(df_trends["Année"].max())
     df_proj_base = project_baseline(df_trends, annee_ref)
 
-    st.markdown("### 🎯 Scénario d’économies")
+    st.markdown("### 🎯 Hypothèses de réduction")
     reductions = {}
 
     for poste in sorted(df_proj_base["Poste"].unique()):
-        taux = st.slider(
-            f"{poste} – réduction (%)",
-            0, 40, 0, 5
-        )
+        taux = st.slider(f"{poste} – réduction (%)", 0, 40, 0, 5)
         if taux > 0:
             reductions[poste] = taux
 
@@ -226,7 +200,7 @@ if df_trends is not None:
     st.success(f"💡 Économie cumulée estimée : {economie:,.0f} €")
 
 # =========================
-# 7️⃣ V6 – RAPPORT AG PDF
+# 7️⃣ RAPPORT AG PDF
 # =========================
 st.markdown("## 7️⃣ Rapport AG (PDF)")
 
@@ -264,6 +238,33 @@ if st.session_state.historique:
                 file_name=pdf_path,
                 mime="application/pdf"
             )
+
+# =========================
+# 8️⃣ BASE COMPLÈTE DES DÉPENSES (XLSX)
+# =========================
+st.markdown("## 📦 Base complète des dépenses (Excel)")
+
+if st.session_state.historique:
+    df_all = pd.concat(st.session_state.historique, ignore_index=True)
+
+    df_all = df_all.sort_values(
+        ["Année", "Compte", "Poste", "Fournisseur"]
+    )
+
+    master_file = "base_complete_depenses.xlsx"
+
+    with pd.ExcelWriter(master_file, engine="openpyxl") as writer:
+        df_all.to_excel(writer, sheet_name="Factures", index=False)
+
+    with open(master_file, "rb") as f:
+        st.download_button(
+            "📥 Télécharger la base complète des dépenses (XLSX)",
+            f,
+            file_name=master_file,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+else:
+    st.info("Analysez au moins une année pour générer la base complète.")
 
 # =========================
 # FOOTER
