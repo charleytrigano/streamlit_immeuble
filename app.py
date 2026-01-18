@@ -26,7 +26,7 @@ if "df_factures" not in st.session_state:
 
 if "df_budget" not in st.session_state:
     st.session_state.df_budget = pd.DataFrame(
-        columns=["Année", "Compte", "Comptes généraux", "Budget"]
+        columns=["annee", "compte", "compte_general", "budget"]
     )
 
 # =========================
@@ -38,18 +38,20 @@ mode_copro = st.toggle(
 )
 
 # =========================
-# IMPORT DÉPENSES (CSV)
+# IMPORT DÉPENSES
 # =========================
-st.markdown("## 📥 Import des dépenses")
+st.markdown("## 📥 Import des dépenses (CSV)")
 
 uploaded_csv = st.file_uploader(
-    "Importer la base des dépenses (CSV)",
+    "Importer la base des dépenses",
     type=["csv"]
 )
 
 if uploaded_csv:
     try:
         df = pd.read_csv(uploaded_csv, sep=None, engine="python")
+
+        # Nettoyage colonnes
         df.columns = [c.strip().replace("\ufeff", "") for c in df.columns]
 
         required = [
@@ -61,9 +63,14 @@ if uploaded_csv:
         if missing:
             st.error(f"Colonnes manquantes : {', '.join(missing)}")
         else:
-            # Ajout du compte général (2 premiers chiffres)
             df["Compte"] = df["Compte"].astype(str)
-            df["Comptes généraux"] = df["Compte"].str[:2]
+            df["compte_general"] = df["Compte"].str[:2]
+
+            # Normalisation noms
+            df = df.rename(columns={
+                "Année": "annee",
+                "Montant TTC": "montant_ttc"
+            })
 
             st.session_state.df_factures = df
             st.success("Dépenses chargées avec succès")
@@ -75,7 +82,7 @@ if uploaded_csv:
 # STOP SI PAS DE DONNÉES
 # =========================
 if st.session_state.df_factures is None:
-    st.info("Veuillez importer un fichier de dépenses pour continuer.")
+    st.info("Veuillez importer un fichier de dépenses.")
     st.stop()
 
 df = st.session_state.df_factures
@@ -83,10 +90,10 @@ df = st.session_state.df_factures
 # =========================
 # FILTRE ANNÉE
 # =========================
-annees = sorted(df["Année"].dropna().unique())
+annees = sorted(df["annee"].unique())
 annee_sel = st.selectbox("Exercice analysé", annees)
 
-df_annee = df[df["Année"] == annee_sel]
+df_annee = df[df["annee"] == annee_sel]
 
 # =========================
 # ✏️ ÉDITION DES DÉPENSES
@@ -100,61 +107,68 @@ if not mode_copro:
         use_container_width=True
     )
 
-    df_autres = df[df["Année"] != annee_sel]
+    df_autres = df[df["annee"] != annee_sel]
     df_final = pd.concat([df_autres, df_edit], ignore_index=True)
 
-    export_depenses = f"depenses_corrigees_{annee_sel}.csv"
-    df_final.to_csv(export_depenses, index=False, encoding="utf-8")
+    export_file = f"depenses_corrigees_{annee_sel}.csv"
+    df_final.to_csv(export_file, index=False, encoding="utf-8")
 
-    with open(export_depenses, "rb") as f:
+    with open(export_file, "rb") as f:
         st.download_button(
             "📥 Télécharger les dépenses mises à jour",
             f,
-            file_name=export_depenses,
-            mime="text/csv"
+            file_name=export_file
         )
 else:
     df_final = df.copy()
 
 # =========================
-# 📊 SYNTHÈSE PAR POSTE (INFO)
+# SYNTHÈSE PAR POSTE
 # =========================
 st.markdown("## 📊 Synthèse par poste")
 
 synth_poste = (
-    df_final[df_final["Année"] == annee_sel]
-    .groupby("Poste")["Montant TTC"]
+    df_final[df_final["annee"] == annee_sel]
+    .groupby("Poste")["montant_ttc"]
     .sum()
     .reset_index()
-    .sort_values("Montant TTC", ascending=False)
+    .sort_values("montant_ttc", ascending=False)
 )
 
 st.dataframe(synth_poste, use_container_width=True)
-st.bar_chart(synth_poste.set_index("Poste")["Montant TTC"])
 
 # =========================
-# 💰 BUDGET – COMPTES GÉNÉRAUX
+# 💰 IMPORT & ÉDITION BUDGET
 # =========================
 if not mode_copro:
     st.markdown("## 💰 Budget par comptes généraux")
 
     uploaded_budget = st.file_uploader(
-        "Importer le budget (CSV)",
+        "Importer le budget",
         type=["csv"],
-        key="budget_upload"
+        key="budget"
     )
 
     if uploaded_budget:
         try:
             df_budget = pd.read_csv(uploaded_budget, sep=None, engine="python")
-            df_budget.columns = [c.strip() for c in df_budget.columns]
+            df_budget.columns = [c.strip().replace("\ufeff", "") for c in df_budget.columns]
+
+            df_budget = df_budget.rename(columns={
+                "Année": "annee",
+                "Compte": "compte",
+                "Comptes généraux": "compte_general",
+                "Budget": "budget"
+            })
+
             st.session_state.df_budget = df_budget
             st.success("Budget chargé")
+
         except Exception as e:
             st.error(f"Erreur budget : {e}")
 
     df_budget = st.session_state.df_budget
-    df_budget_annee = df_budget[df_budget["Année"] == annee_sel]
+    df_budget_annee = df_budget[df_budget["annee"] == annee_sel]
 
     df_budget_edit = st.data_editor(
         df_budget_annee,
@@ -162,7 +176,7 @@ if not mode_copro:
         use_container_width=True
     )
 
-    df_budget_autres = df_budget[df_budget["Année"] != annee_sel]
+    df_budget_autres = df_budget[df_budget["annee"] != annee_sel]
     df_budget_final = pd.concat(
         [df_budget_autres, df_budget_edit],
         ignore_index=True
@@ -170,78 +184,32 @@ if not mode_copro:
 
     st.session_state.df_budget = df_budget_final
 
-    budget_file = f"budget_comptes_generaux_{annee_sel}.csv"
-    df_budget_final.to_csv(budget_file, index=False, encoding="utf-8")
-
-    with open(budget_file, "rb") as f:
-        st.download_button(
-            "📥 Télécharger le budget mis à jour",
-            f,
-            file_name=budget_file,
-            mime="text/csv"
-        )
-
 # =========================
-# 📊 BUDGET vs RÉEL (COMPTES GÉNÉRAUX)
+# 📊 BUDGET vs RÉEL (FIX)
 # =========================
 if not mode_copro and not st.session_state.df_budget.empty:
     st.markdown("## 📊 Budget vs Réel (comptes généraux)")
 
     reel = (
-        df_final[df_final["Année"] == annee_sel]
-        .groupby("Comptes généraux")["Montant TTC"]
+        df_final[df_final["annee"] == annee_sel]
+        .groupby("compte_general")["montant_ttc"]
         .sum()
         .reset_index()
     )
 
     budget = st.session_state.df_budget
-    budget_annee = budget[budget["Année"] == annee_sel]
+    budget_annee = budget[budget["annee"] == annee_sel]
 
     comp = reel.merge(
         budget_annee,
-        on="Comptes généraux",
+        on="compte_general",
         how="left"
     )
 
-    comp["Écart (€)"] = comp["Montant TTC"] - comp["Budget"]
-    comp["Écart (%)"] = (comp["Écart (€)"] / comp["Budget"]) * 100
+    comp["écart (€)"] = comp["montant_ttc"] - comp["budget"]
+    comp["écart (%)"] = (comp["écart (€)"] / comp["budget"]) * 100
 
     st.dataframe(comp, use_container_width=True)
-
-# =========================
-# 📈 PLURIANNUEL (COMPTES GÉNÉRAUX)
-# =========================
-if df_final["Année"].nunique() >= 2:
-    st.markdown("## 📈 Évolution pluriannuelle (comptes généraux)")
-
-    evol = (
-        df_final.groupby(["Année", "Comptes généraux"])["Montant TTC"]
-        .sum()
-        .reset_index()
-    )
-
-    cg_sel = st.selectbox(
-        "Compte général",
-        sorted(evol["Comptes généraux"].unique())
-    )
-
-    st.line_chart(
-        evol[evol["Comptes généraux"] == cg_sel]
-        .set_index("Année")["Montant TTC"]
-    )
-
-# =========================
-# MESSAGE COPROPRIÉTAIRE
-# =========================
-if mode_copro:
-    total = synth_poste["Montant TTC"].sum()
-    top3 = synth_poste.head(3)["Montant TTC"].sum()
-
-    st.success(
-        f"Les **3 principaux postes** représentent "
-        f"{top3 / total * 100:.1f} % des charges totales. "
-        "Le suivi budgétaire est effectué par grandes catégories comptables."
-    )
 
 # =========================
 # FOOTER
