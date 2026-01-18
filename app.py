@@ -98,30 +98,31 @@ if uploaded_budget:
 df_budget = st.session_state.df_budget.copy()
 
 # =========================
-# BUDGET vs REEL (ROBUSTE)
+# 📊 BUDGET vs RÉEL (CORRIGÉ)
 # =========================
 if not df_budget.empty:
     st.markdown("## 📊 Budget vs Réel")
 
     budget_annee = df_budget[df_budget["annee"] == annee_sel].copy()
+    budget_annee["compte"] = budget_annee["compte"].astype(str)
 
-    # clés budgétaires (3 ou 4 chiffres) triées par longueur décroissante
+    # clés budgétaires = SOURCE DE VÉRITÉ
     cles_budget = sorted(
         budget_annee["compte"].unique(),
         key=len,
         reverse=True
     )
 
-    def map_cle_budget(compte: str):
+    def map_budget(compte_reel: str):
         for cle in cles_budget:
-            if compte.startswith(cle):
+            if compte_reel.startswith(cle):
                 return cle
         return "NON BUDGÉTÉ"
 
-    df_annee["cle_budget"] = df_annee["compte"].apply(map_cle_budget)
+    df_annee["cle_budget"] = df_annee["compte"].apply(map_budget)
 
     reel = (
-        df_annee.groupby("cle_budget", dropna=False)["montant_ttc"]
+        df_annee.groupby("cle_budget")["montant_ttc"]
         .sum()
         .reset_index()
         .rename(columns={"montant_ttc": "reel"})
@@ -137,7 +138,8 @@ if not df_budget.empty:
     comp["budget"] = comp["budget"].fillna(0)
     comp["ecart_eur"] = comp["reel"] - comp["budget"]
     comp["ecart_pct"] = comp.apply(
-        lambda r: (r["ecart_eur"] / r["budget"] * 100) if r["budget"] != 0 else None,
+        lambda r: (r["ecart_eur"] / r["budget"] * 100)
+        if r["budget"] != 0 else None,
         axis=1
     )
 
