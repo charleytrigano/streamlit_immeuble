@@ -46,7 +46,7 @@ def normalize_budget(df: pd.DataFrame) -> pd.DataFrame:
     df["compte"] = df["compte"].astype(str)
     df["budget"] = df["budget"].astype(float)
 
-    # 621 / 622 sur 4 chiffres, sinon 3
+    # règle comptable : 621 / 622 sur 4 chiffres, sinon 3
     df["compte"] = df["compte"].apply(
         lambda x: x[:4] if x.startswith(("621", "622")) else x[:3]
     )
@@ -70,12 +70,18 @@ with st.sidebar:
     bud_csv = st.file_uploader("Budget (CSV)", type="csv")
 
     if dep_csv:
-        df = pd.read_csv(dep_csv, sep=None, engine="python", on_bad_lines="skip", encoding="utf-8-sig")
+        df = pd.read_csv(
+            dep_csv, sep=None, engine="python",
+            on_bad_lines="skip", encoding="utf-8-sig"
+        )
         st.session_state.df_dep = normalize_depenses(df)
         st.success("Dépenses chargées")
 
     if bud_csv:
-        df = pd.read_csv(bud_csv, sep=None, engine="python", on_bad_lines="skip", encoding="utf-8-sig")
+        df = pd.read_csv(
+            bud_csv, sep=None, engine="python",
+            on_bad_lines="skip", encoding="utf-8-sig"
+        )
         st.session_state.df_bud = normalize_budget(df)
         st.success("Budget chargé")
 
@@ -103,8 +109,9 @@ with st.sidebar:
 # 📊 ONGLET 1 — ÉTAT DES DÉPENSES
 # ======================================================
 if page == "📊 État des dépenses":
+
     annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
-    df_a = df_dep[df_dep["annee"] == annee]
+    df_a = df_dep[df_dep["annee"] == annee].copy()
 
     dep_pos = df_a[df_a["montant_ttc"] > 0]["montant_ttc"].sum()
     dep_neg = df_a[df_a["montant_ttc"] < 0]["montant_ttc"].sum()
@@ -114,26 +121,57 @@ if page == "📊 État des dépenses":
     col2.metric("Avoirs", f"{dep_neg:,.0f}".replace(",", " "))
     col3.metric("Dépenses nettes", f"{dep_pos + dep_neg:,.0f}".replace(",", " "))
 
-    st.dataframe(df_a, use_container_width=True)
+    df_edit = st.data_editor(df_a, num_rows="dynamic", use_container_width=True)
+
+    df_other = df_dep[df_dep["annee"] != annee]
+    st.session_state.df_dep = pd.concat([df_other, df_edit], ignore_index=True)
+
+    st.download_button(
+        "📥 Télécharger les dépenses",
+        st.session_state.df_dep.to_csv(index=False).encode("utf-8"),
+        file_name="base_depenses_immeuble.csv",
+        mime="text/csv",
+    )
 
 # ======================================================
-# 💰 ONGLET 2 — BUDGET
+# 💰 ONGLET 2 — BUDGET (ÉDITABLE)
 # ======================================================
 if page == "💰 Budget":
-    annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()))
-    df_b = df_bud[df_bud["annee"] == annee]
 
-    st.metric("Budget total", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
-    st.dataframe(df_b, use_container_width=True)
+    annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()))
+    df_b = df_bud[df_bud["annee"] == annee].copy()
+
+    # KPI temps réel
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Budget total (€)", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
+    col2.metric("Comptes budgétés", len(df_b))
+    col3.metric("Groupes", df_b["compte"].str[:2].nunique())
+
+    st.markdown("### ✏️ Ajouter / Modifier / Supprimer des lignes de budget")
+
+    df_edit = st.data_editor(
+        df_b,
+        num_rows="dynamic",
+        use_container_width=True,
+    )
+
+    # Reconstruction globale
+    df_other = df_bud[df_bud["annee"] != annee]
+    st.session_state.df_bud = pd.concat([df_other, df_edit], ignore_index=True)
+
+    st.download_button(
+        "📥 Télécharger le budget",
+        st.session_state.df_bud.to_csv(index=False).encode("utf-8"),
+        file_name="budget_comptes_generaux.csv",
+        mime="text/csv",
+    )
 
 # ======================================================
-# 📊 ONGLET 3 — BUDGET VS RÉEL (AVEC FILTRES & KPI)
+# 📊 ONGLET 3 — BUDGET VS RÉEL (PILOTAGE)
 # ======================================================
 if page == "📊 Budget vs Réel – Pilotage":
 
-    # -------- Filtres
     colf1, colf2, colf3 = st.columns(3)
-
     with colf1:
         annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
     with colf2:
@@ -152,7 +190,6 @@ if page == "📊 Budget vs Réel – Pilotage":
         st.warning("Aucun budget pour ce filtre.")
         st.stop()
 
-    # -------- Mapping budget
     cles = sorted(bud["compte"].unique(), key=len, reverse=True)
 
     def map_budget(c):
@@ -163,7 +200,6 @@ if page == "📊 Budget vs Réel – Pilotage":
 
     dep["compte_budget"] = dep["compte"].apply(map_budget)
 
-    # -------- Agrégations
     dep_pos = dep[dep["montant_ttc"] > 0].groupby("compte_budget")["montant_ttc"].sum()
     dep_neg = dep[dep["montant_ttc"] < 0].groupby("compte_budget")["montant_ttc"].sum()
 
@@ -179,9 +215,8 @@ if page == "📊 Budget vs Réel – Pilotage":
     if only_over:
         comp = comp[comp["ecart"] > 0]
 
-    # -------- KPI
+    # KPI pilotage
     col1, col2, col3, col4, col5 = st.columns(5)
-
     col1.metric("Budget", f"{comp['budget'].sum():,.0f}".replace(",", " "))
     col2.metric("Dépenses brutes", f"{comp['depenses_brutes'].sum():,.0f}".replace(",", " "))
     col3.metric("Avoirs", f"{comp['avoirs'].sum():,.0f}".replace(",", " "))
