@@ -24,9 +24,15 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
 # ======================================================
 def normalize_depenses(df: pd.DataFrame) -> pd.DataFrame:
     df = clean_columns(df)
-    required = {"annee", "compte", "montant_ttc", "poste"}
-    if not required.issubset(df.columns):
-        st.error(f"Colonnes manquantes dans les dépenses : {required - set(df.columns)}")
+
+    # colonne poste optionnelle (mais souhaitée)
+    if "poste" not in df.columns:
+        df["poste"] = "Non renseigné"
+
+    required = {"annee", "compte", "montant_ttc"}
+    missing = required - set(df.columns)
+    if missing:
+        st.error(f"Colonnes manquantes dans les dépenses : {missing}")
         st.stop()
 
     df["annee"] = df["annee"].astype(float).astype(int)
@@ -38,9 +44,11 @@ def normalize_depenses(df: pd.DataFrame) -> pd.DataFrame:
 
 def normalize_budget(df: pd.DataFrame) -> pd.DataFrame:
     df = clean_columns(df)
+
     required = {"annee", "compte", "budget"}
-    if not required.issubset(df.columns):
-        st.error(f"Colonnes manquantes dans le budget : {required - set(df.columns)}")
+    missing = required - set(df.columns)
+    if missing:
+        st.error(f"Colonnes manquantes dans le budget : {missing}")
         st.stop()
 
     df["annee"] = df["annee"].astype(float).astype(int)
@@ -107,7 +115,72 @@ with st.sidebar:
     )
 
 # ======================================================
-# 📊 ONGLET — BUDGET VS RÉEL (AVEC POSTE)
+# 📊 ONGLET 1 — ÉTAT DES DÉPENSES (ÉDITABLE)
+# ======================================================
+if page == "📊 État des dépenses":
+
+    annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
+    df_a = df_dep[df_dep["annee"] == annee].copy()
+
+    dep_pos = df_a[df_a["montant_ttc"] > 0]["montant_ttc"].sum()
+    dep_neg = df_a[df_a["montant_ttc"] < 0]["montant_ttc"].sum()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Dépenses brutes (€)", f"{dep_pos:,.0f}".replace(",", " "))
+    col2.metric("Avoirs (€)", f"{dep_neg:,.0f}".replace(",", " "))
+    col3.metric("Dépenses nettes (€)", f"{dep_pos + dep_neg:,.0f}".replace(",", " "))
+
+    st.markdown("### ✏️ Ajouter / Modifier / Supprimer des dépenses")
+
+    df_edit = st.data_editor(
+        df_a,
+        num_rows="dynamic",
+        use_container_width=True
+    )
+
+    df_other = df_dep[df_dep["annee"] != annee]
+    st.session_state.df_dep = pd.concat([df_other, df_edit], ignore_index=True)
+
+    st.download_button(
+        "📥 Télécharger les dépenses",
+        st.session_state.df_dep.to_csv(index=False).encode("utf-8"),
+        file_name="base_depenses_immeuble.csv",
+        mime="text/csv",
+    )
+
+# ======================================================
+# 💰 ONGLET 2 — BUDGET (ÉDITABLE)
+# ======================================================
+if page == "💰 Budget":
+
+    annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()))
+    df_b = df_bud[df_bud["annee"] == annee].copy()
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Budget total (€)", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
+    col2.metric("Comptes budgétés", len(df_b))
+    col3.metric("Groupes", df_b["compte"].str[:2].nunique())
+
+    st.markdown("### ✏️ Ajouter / Modifier / Supprimer des lignes de budget")
+
+    df_edit = st.data_editor(
+        df_b,
+        num_rows="dynamic",
+        use_container_width=True,
+    )
+
+    df_other = df_bud[df_bud["annee"] != annee]
+    st.session_state.df_bud = pd.concat([df_other, df_edit], ignore_index=True)
+
+    st.download_button(
+        "📥 Télécharger le budget",
+        st.session_state.df_bud.to_csv(index=False).encode("utf-8"),
+        file_name="budget_comptes_generaux.csv",
+        mime="text/csv",
+    )
+
+# ======================================================
+# 📊 ONGLET 3 — BUDGET VS RÉEL (COMPLET)
 # ======================================================
 if page == "📊 Budget vs Réel – Pilotage":
 
@@ -140,7 +213,7 @@ if page == "📊 Budget vs Réel – Pilotage":
 
     dep["compte_budget"] = dep["compte"].apply(map_budget)
 
-    # --- POSTE DOMINANT PAR COMPTE BUDGÉTAIRE
+    # Poste dominant
     postes = (
         dep.groupby(["compte_budget", "poste"])
         .size()
@@ -166,7 +239,6 @@ if page == "📊 Budget vs Réel – Pilotage":
     if only_over:
         comp = comp[comp["ecart_eur"] > 0]
 
-    # KPI
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     col1.metric("Budget (€)", f"{comp['budget'].sum():,.0f}".replace(",", " "))
     col2.metric("Dépenses brutes (€)", f"{comp['depenses_brutes'].sum():,.0f}".replace(",", " "))
