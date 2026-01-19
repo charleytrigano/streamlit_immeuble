@@ -20,13 +20,25 @@ def clean_columns(df):
     df.columns = [norm(c) for c in df.columns]
     return df
 
+
 def facture_status(row):
-    if pd.isna(row.get("piece_id")) or row["piece_id"] == "":
+    raw_id = str(row.get("piece_id", "")).strip()
+
+    if raw_id == "" or raw_id.lower() == "nan":
         return "❌ À justifier", None
-    path = f"factures/{row['annee']}/{row['piece_id']}.pdf"
+
+    # Si l'année n'est pas déjà incluse, on la préfixe
+    if not raw_id.startswith(str(row["annee"])):
+        piece_id = f"{row['annee']} - {raw_id}"
+    else:
+        piece_id = raw_id
+
+    path = f"factures/{row['annee']}/{piece_id}.pdf"
+
     if os.path.exists(path):
         return "✅ OK", path
-    return "⚠️ PDF manquant", None
+    else:
+        return "⚠️ PDF manquant", None
 
 # ======================================================
 # NORMALISATION
@@ -34,12 +46,9 @@ def facture_status(row):
 def normalize_depenses(df):
     df = clean_columns(df)
 
-    if "poste" not in df.columns:
-        df["poste"] = "Non renseigné"
-    if "fournisseur" not in df.columns:
-        df["fournisseur"] = "Non renseigné"
-    if "piece_id" not in df.columns:
-        df["piece_id"] = ""
+    for col in ["poste", "fournisseur", "piece_id"]:
+        if col not in df.columns:
+            df[col] = ""
 
     required = {"annee", "compte", "montant_ttc"}
     if not required.issubset(df.columns):
@@ -49,7 +58,14 @@ def normalize_depenses(df):
     df["annee"] = df["annee"].astype(float).astype(int)
     df["compte"] = df["compte"].astype(str)
     df["montant_ttc"] = df["montant_ttc"].astype(float)
+    df["piece_id"] = (
+        df["piece_id"]
+        .astype(str)
+        .str.strip()
+        .str.replace("\u00a0", " ", regex=False)
+    )
     return df
+
 
 def normalize_budget(df):
     df = clean_columns(df)
@@ -149,6 +165,10 @@ if page == "📊 État des dépenses":
     elif type_flux == "Avoirs":
         df_f = df_f[df_f["montant_ttc"] < 0]
 
+    df_f[["statut_facture", "facture_path"]] = df_f.apply(
+        lambda r: pd.Series(facture_status(r)), axis=1
+    )
+
     dep_pos = df_f[df_f["montant_ttc"] > 0]["montant_ttc"].sum()
     dep_neg = df_f[df_f["montant_ttc"] < 0]["montant_ttc"].sum()
 
@@ -158,37 +178,32 @@ if page == "📊 État des dépenses":
     col3.metric("Dépenses nettes (€)", f"{dep_pos + dep_neg:,.0f}".replace(",", " "))
     col4.metric("Lignes", len(df_f))
 
-    df_f[["statut_facture", "facture_path"]] = df_f.apply(
-        lambda r: pd.Series(facture_status(r)), axis=1
-    )
-
-    st.markdown("### ✏️ Ajouter / Modifier / Supprimer des dépenses")
-
-    df_edit = st.data_editor(
-        df_f,
-        num_rows="dynamic",
-        use_container_width=True
-    )
-
-    df_other = df_dep.drop(df_f.index)
-    st.session_state.df_dep = pd.concat([df_other, df_edit], ignore_index=True)
-
-    st.download_button(
-        "📥 Télécharger les dépenses",
-        st.session_state.df_dep.to_csv(index=False).encode("utf-8"),
-        file_name="base_depenses_immeuble.csv",
-        mime="text/csv",
+    st.markdown("### 📋 Détail des dépenses")
+    st.dataframe(
+        df_f[
+            [
+                "annee",
+                "compte",
+                "poste",
+                "fournisseur",
+                "montant_ttc",
+                "piece_id",
+                "statut_facture",
+            ]
+        ],
+        use_container_width=True,
     )
 
     st.markdown("### 📄 Consulter une facture")
-
     factures_ok = df_f[df_f["facture_path"].notna()]
+
     if not factures_ok.empty:
         idx = st.selectbox(
             "Choisir une dépense",
             factures_ok.index,
             format_func=lambda i: f"{factures_ok.loc[i,'poste']} – {factures_ok.loc[i,'fournisseur']} – {factures_ok.loc[i,'montant_ttc']} €"
         )
+
         with open(factures_ok.loc[idx, "facture_path"], "rb") as f:
             st.download_button(
                 "📄 Ouvrir la facture",
@@ -233,11 +248,8 @@ if page == "💰 Budget":
 # ======================================================
 if page == "📊 Budget vs Réel":
 
-    colf1, colf2 = st.columns(2)
-    with colf1:
-        annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
-    with colf2:
-        only_over = st.checkbox("Uniquement les dépassements")
+    annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
+    only_over = st.checkbox("Uniquement les dépassements")
 
     dep = df_dep[df_dep["annee"] == annee].copy()
     bud = df_bud[df_bud["annee"] == annee].copy()
@@ -252,20 +264,10 @@ if page == "📊 Budget vs Réel":
 
     dep["compte_budget"] = dep["compte"].apply(map_budget)
 
-    postes = (
-        dep.groupby(["compte_budget", "poste"])
-        .size()
-        .reset_index(name="n")
-        .sort_values(["compte_budget", "n"], ascending=[True, False])
-        .drop_duplicates("compte_budget")
-        .set_index("compte_budget")["poste"]
-    )
-
     dep_pos = dep[dep["montant_ttc"] > 0].groupby("compte_budget")["montant_ttc"].sum()
     dep_neg = dep[dep["montant_ttc"] < 0].groupby("compte_budget")["montant_ttc"].sum()
 
     comp = bud.set_index("compte").copy()
-    comp["poste"] = postes
     comp["depenses_brutes"] = dep_pos
     comp["avoirs"] = dep_neg
     comp = comp.fillna(0)
@@ -291,7 +293,6 @@ if page == "📊 Budget vs Réel":
     st.dataframe(
         comp.reset_index()[[
             "compte",
-            "poste",
             "budget",
             "depenses_brutes",
             "avoirs",
