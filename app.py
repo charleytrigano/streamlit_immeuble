@@ -46,7 +46,7 @@ def normalize_budget(df: pd.DataFrame) -> pd.DataFrame:
     df["compte"] = df["compte"].astype(str)
     df["budget"] = df["budget"].astype(float)
 
-    # règle comptable : 621 / 622 sur 4 chiffres, sinon 3
+    # 621 / 622 sur 4 chiffres, sinon 3
     df["compte"] = df["compte"].apply(
         lambda x: x[:4] if x.startswith(("621", "622")) else x[:3]
     )
@@ -117,9 +117,9 @@ if page == "📊 État des dépenses":
     dep_neg = df_a[df_a["montant_ttc"] < 0]["montant_ttc"].sum()
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Dépenses brutes", f"{dep_pos:,.0f}".replace(",", " "))
-    col2.metric("Avoirs", f"{dep_neg:,.0f}".replace(",", " "))
-    col3.metric("Dépenses nettes", f"{dep_pos + dep_neg:,.0f}".replace(",", " "))
+    col1.metric("Dépenses brutes (€)", f"{dep_pos:,.0f}".replace(",", " "))
+    col2.metric("Avoirs (€)", f"{dep_neg:,.0f}".replace(",", " "))
+    col3.metric("Dépenses nettes (€)", f"{dep_pos + dep_neg:,.0f}".replace(",", " "))
 
     df_edit = st.data_editor(df_a, num_rows="dynamic", use_container_width=True)
 
@@ -141,21 +141,13 @@ if page == "💰 Budget":
     annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()))
     df_b = df_bud[df_bud["annee"] == annee].copy()
 
-    # KPI temps réel
     col1, col2, col3 = st.columns(3)
     col1.metric("Budget total (€)", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
     col2.metric("Comptes budgétés", len(df_b))
     col3.metric("Groupes", df_b["compte"].str[:2].nunique())
 
-    st.markdown("### ✏️ Ajouter / Modifier / Supprimer des lignes de budget")
+    df_edit = st.data_editor(df_b, num_rows="dynamic", use_container_width=True)
 
-    df_edit = st.data_editor(
-        df_b,
-        num_rows="dynamic",
-        use_container_width=True,
-    )
-
-    # Reconstruction globale
     df_other = df_bud[df_bud["annee"] != annee]
     st.session_state.df_bud = pd.concat([df_other, df_edit], ignore_index=True)
 
@@ -167,7 +159,7 @@ if page == "💰 Budget":
     )
 
 # ======================================================
-# 📊 ONGLET 3 — BUDGET VS RÉEL (PILOTAGE)
+# 📊 ONGLET 3 — BUDGET VS RÉEL (AVEC ÉCART €)
 # ======================================================
 if page == "📊 Budget vs Réel – Pilotage":
 
@@ -209,21 +201,22 @@ if page == "📊 Budget vs Réel – Pilotage":
     comp = comp.fillna(0)
 
     comp["depenses_nettes"] = comp["depenses_brutes"] + comp["avoirs"]
-    comp["ecart"] = comp["depenses_nettes"] - comp["budget"]
-    comp["ecart_pct"] = comp["ecart"] / comp["budget"] * 100
+    comp["ecart_eur"] = comp["depenses_nettes"] - comp["budget"]
+    comp["ecart_pct"] = comp["ecart_eur"] / comp["budget"] * 100
 
     if only_over:
-        comp = comp[comp["ecart"] > 0]
+        comp = comp[comp["ecart_eur"] > 0]
 
-    # KPI pilotage
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Budget", f"{comp['budget'].sum():,.0f}".replace(",", " "))
-    col2.metric("Dépenses brutes", f"{comp['depenses_brutes'].sum():,.0f}".replace(",", " "))
-    col3.metric("Avoirs", f"{comp['avoirs'].sum():,.0f}".replace(",", " "))
-    col4.metric("Dépenses nettes", f"{comp['depenses_nettes'].sum():,.0f}".replace(",", " "))
-    col5.metric(
-        "Écart %",
-        f"{((comp['depenses_nettes'].sum() - comp['budget'].sum()) / comp['budget'].sum() * 100):.1f} %"
+    # KPI COMPLETS
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1.metric("Budget (€)", f"{comp['budget'].sum():,.0f}".replace(",", " "))
+    col2.metric("Dépenses brutes (€)", f"{comp['depenses_brutes'].sum():,.0f}".replace(",", " "))
+    col3.metric("Avoirs (€)", f"{comp['avoirs'].sum():,.0f}".replace(",", " "))
+    col4.metric("Dépenses nettes (€)", f"{comp['depenses_nettes'].sum():,.0f}".replace(",", " "))
+    col5.metric("Écart (€)", f"{comp['ecart_eur'].sum():,.0f}".replace(",", " "))
+    col6.metric(
+        "Écart (%)",
+        f"{(comp['ecart_eur'].sum() / comp['budget'].sum() * 100):.1f} %"
         if comp['budget'].sum() != 0 else "-"
     )
 
@@ -236,7 +229,7 @@ if page == "📊 Budget vs Réel – Pilotage":
                 "depenses_brutes",
                 "avoirs",
                 "depenses_nettes",
-                "ecart",
+                "ecart_eur",
                 "ecart_pct",
             ]
         ],
