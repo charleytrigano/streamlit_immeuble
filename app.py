@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import unicodedata
 
 # ======================================================
 # CONFIG
@@ -8,32 +9,45 @@ st.set_page_config(page_title="Pilotage des charges", layout="wide")
 st.title("Pilotage des charges de l’immeuble")
 
 # ======================================================
+# OUTILS ROBUSTES
+# ======================================================
+def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
+    def normalize(col):
+        col = str(col).strip().lower()
+        col = unicodedata.normalize("NFKD", col).encode("ascii", "ignore").decode()
+        col = col.replace(" ", "_")
+        return col
+    df.columns = [normalize(c) for c in df.columns]
+    return df
+
+# ======================================================
 # NORMALISATION
 # ======================================================
-def normalize_depenses(df):
-    df = df.rename(columns={
-        "Annee": "annee",
-        "Compte": "compte",
-        "Poste": "poste",
-        "Fournisseur": "fournisseur",
-        "Date": "date",
-        "Montant TTC": "montant_ttc",
-        "Type": "type",
-        "Recurrent": "recurrent",
-        "Commentaire": "commentaire",
-    })
+def normalize_depenses(df: pd.DataFrame) -> pd.DataFrame:
+    df = clean_columns(df)
+
+    required = {"annee", "compte", "montant_ttc"}
+    missing = required - set(df.columns)
+    if missing:
+        st.error(f"Colonnes manquantes dans le fichier dépenses : {missing}")
+        st.stop()
+
     df["annee"] = df["annee"].astype(float).astype(int)
     df["compte"] = df["compte"].astype(str)
     df["montant_ttc"] = df["montant_ttc"].astype(float)
+
     return df
 
 
-def normalize_budget(df):
-    df = df.rename(columns={
-        "Annee": "annee",
-        "compte": "compte",
-        "budget": "budget",
-    })
+def normalize_budget(df: pd.DataFrame) -> pd.DataFrame:
+    df = clean_columns(df)
+
+    required = {"annee", "compte", "budget"}
+    missing = required - set(df.columns)
+    if missing:
+        st.error(f"Colonnes manquantes dans le fichier budget : {missing}")
+        st.stop()
+
     df["annee"] = df["annee"].astype(float).astype(int)
     df["compte"] = df["compte"].astype(str)
     df["budget"] = df["budget"].astype(float)
@@ -53,7 +67,7 @@ if "df_budget" not in st.session_state:
     st.session_state.df_budget = None
 
 # ======================================================
-# SIDEBAR — CHARGEMENT ROBUSTE CSV
+# SIDEBAR — CHARGEMENT CSV ROBUSTE
 # ======================================================
 with st.sidebar:
     st.markdown("## 📂 Chargement des données")
@@ -62,13 +76,25 @@ with st.sidebar:
     bud_csv = st.file_uploader("Budget (CSV)", type="csv")
 
     if dep_csv:
-        df_dep = pd.read_csv(dep_csv, sep=None, engine="python")
-        st.session_state.df_depenses = normalize_depenses(df_dep)
+        df = pd.read_csv(
+            dep_csv,
+            sep=None,
+            engine="python",
+            on_bad_lines="skip",
+            encoding="utf-8-sig",
+        )
+        st.session_state.df_depenses = normalize_depenses(df)
         st.success("Dépenses chargées")
 
     if bud_csv:
-        df_bud = pd.read_csv(bud_csv, sep=None, engine="python")
-        st.session_state.df_budget = normalize_budget(df_bud)
+        df = pd.read_csv(
+            bud_csv,
+            sep=None,
+            engine="python",
+            on_bad_lines="skip",
+            encoding="utf-8-sig",
+        )
+        st.session_state.df_budget = normalize_budget(df)
         st.success("Budget chargé")
 
 # ======================================================
@@ -105,23 +131,12 @@ if page == "📊 État des dépenses":
     dep_pos = df_a[df_a["montant_ttc"] > 0]
     dep_neg = df_a[df_a["montant_ttc"] < 0]
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Dépenses brutes (€)", f"{dep_pos['montant_ttc'].sum():,.2f}".replace(",", " "))
-    col2.metric("Avoirs (€)", f"{dep_neg['montant_ttc'].sum():,.2f}".replace(",", " "))
-    col3.metric("Dépenses nettes (€)", f"{df_a['montant_ttc'].sum():,.2f}".replace(",", " "))
-    col4.metric("Fournisseurs", df_a["fournisseur"].nunique())
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Dépenses brutes (€)", f"{dep_pos['montant_ttc'].sum():,.0f}".replace(",", " "))
+    col2.metric("Avoirs (€)", f"{dep_neg['montant_ttc'].sum():,.0f}".replace(",", " "))
+    col3.metric("Dépenses nettes (€)", f"{df_a['montant_ttc'].sum():,.0f}".replace(",", " "))
 
-    df_edit = st.data_editor(df_a, num_rows="dynamic", use_container_width=True)
-
-    df_other = df_dep[df_dep["annee"] != annee]
-    st.session_state.df_depenses = pd.concat([df_other, df_edit], ignore_index=True)
-
-    st.download_button(
-        "📥 Télécharger les dépenses",
-        st.session_state.df_depenses.to_csv(index=False).encode("utf-8"),
-        file_name="base_depenses_immeuble.csv",
-        mime="text/csv",
-    )
+    st.data_editor(df_a, num_rows="dynamic", use_container_width=True)
 
 # ======================================================
 # 💰 ONGLET 2 — BUDGET
@@ -129,24 +144,10 @@ if page == "📊 État des dépenses":
 if page == "💰 Budget":
 
     annee_b = st.selectbox("Année budgétaire", sorted(df_budget["annee"].unique()))
-    dfb = df_budget[df_budget["annee"] == annee_b].copy()
+    dfb = df_budget[df_budget["annee"] == annee_b]
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Budget total (€)", f"{dfb['budget'].sum():,.2f}".replace(",", " "))
-    col2.metric("Comptes budgétés", len(dfb))
-    col3.metric("Groupes", dfb["compte"].str[:2].nunique())
-
-    df_edit = st.data_editor(dfb, num_rows="dynamic", use_container_width=True)
-
-    df_other = df_budget[df_budget["annee"] != annee_b]
-    st.session_state.df_budget = pd.concat([df_other, df_edit], ignore_index=True)
-
-    st.download_button(
-        "📥 Télécharger le budget",
-        st.session_state.df_budget.to_csv(index=False).encode("utf-8"),
-        file_name="budget_comptes_generaux.csv",
-        mime="text/csv",
-    )
+    st.metric("Budget total (€)", f"{dfb['budget'].sum():,.0f}".replace(",", " "))
+    st.data_editor(dfb, num_rows="dynamic", use_container_width=True)
 
 # ======================================================
 # 📊 ONGLET 3 — BUDGET VS RÉEL
@@ -154,20 +155,14 @@ if page == "💰 Budget":
 if page == "📊 Budget vs Réel – Pilotage":
 
     annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
-    only_over = st.checkbox("Uniquement les dépassements")
-
-    dep = df_dep[df_dep["annee"] == annee].copy()
-    bud = df_budget[df_budget["annee"] == annee].copy()
-
-    if bud.empty:
-        st.warning("Aucun budget pour cette année.")
-        st.stop()
+    dep = df_dep[df_dep["annee"] == annee]
+    bud = df_budget[df_budget["annee"] == annee]
 
     cles_budget = sorted(bud["compte"].unique(), key=len, reverse=True)
 
-    def map_budget(compte):
+    def map_budget(c):
         for cle in cles_budget:
-            if str(compte).startswith(cle):
+            if c.startswith(cle):
                 return cle
         return "NON BUDGÉTÉ"
 
@@ -176,36 +171,14 @@ if page == "📊 Budget vs Réel – Pilotage":
     dep_pos = dep[dep["montant_ttc"] > 0]
     dep_neg = dep[dep["montant_ttc"] < 0]
 
-    reel_dep = dep_pos.groupby("compte_budget")["montant_ttc"].sum().reset_index(name="depenses_brutes")
-    avoirs = dep_neg.groupby("compte_budget")["montant_ttc"].sum().reset_index(name="avoirs")
+    reel = dep_pos.groupby("compte_budget")["montant_ttc"].sum()
+    avoirs = dep_neg.groupby("compte_budget")["montant_ttc"].sum()
 
-    comp = bud.merge(reel_dep, left_on="compte", right_on="compte_budget", how="left")
-    comp = comp.merge(avoirs, left_on="compte", right_on="compte_budget", how="left")
-
-    comp["depenses_brutes"] = comp["depenses_brutes"].fillna(0)
-    comp["avoirs"] = comp["avoirs"].fillna(0)
+    comp = bud.set_index("compte").copy()
+    comp["depenses_brutes"] = reel
+    comp["avoirs"] = avoirs
+    comp = comp.fillna(0)
     comp["depenses_nettes"] = comp["depenses_brutes"] + comp["avoirs"]
+    comp["ecart"] = comp["depenses_nettes"] - comp["budget"]
 
-    comp["ecart_eur"] = comp["depenses_nettes"] - comp["budget"]
-    comp["ecart_pct"] = comp.apply(
-        lambda r: (r["ecart_eur"] / r["budget"] * 100) if r["budget"] != 0 else 0,
-        axis=1,
-    )
-
-    if only_over:
-        comp = comp[comp["ecart_eur"] > 0]
-
-    st.dataframe(
-        comp[
-            [
-                "compte",
-                "budget",
-                "depenses_brutes",
-                "avoirs",
-                "depenses_nettes",
-                "ecart_eur",
-                "ecart_pct",
-            ]
-        ],
-        use_container_width=True,
-    )
+    st.dataframe(comp.reset_index(), use_container_width=True)
