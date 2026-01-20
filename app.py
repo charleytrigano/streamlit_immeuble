@@ -111,7 +111,7 @@ with st.sidebar:
 
     if st.button("🔄 Recharger les données"):
         st.cache_data.clear()
-        st.experimental_rerun()
+        st.rerun()
 
     if df_dep is None or df_bud is None:
         st.error("Fichiers CSV manquants ou illisibles dans le dossier /data")
