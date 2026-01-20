@@ -31,7 +31,10 @@ def compute_groupe_compte(compte):
 
 
 def make_facture_link(url):
-    if not url or str(url).lower() == "nan":
+    if pd.isna(url):
+        return "—"
+    url = str(url).strip()
+    if url == "":
         return "—"
     return f'<a href="{url}" target="_blank">📄 Ouvrir</a>'
 
@@ -46,6 +49,11 @@ def normalize_depenses(df):
         if col not in df.columns:
             df[col] = ""
 
+    required = {"annee", "compte", "montant_ttc"}
+    if not required.issubset(df.columns):
+        st.error(f"Colonnes manquantes dans les dépenses : {required - set(df.columns)}")
+        st.stop()
+
     df["annee"] = df["annee"].astype(float).astype(int)
     df["compte"] = df["compte"].astype(str)
     df["montant_ttc"] = df["montant_ttc"].astype(float)
@@ -53,7 +61,7 @@ def normalize_depenses(df):
 
     df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
     df["statut_facture"] = df["pdf_url"].apply(
-        lambda x: "Justifiée" if x not in ("", "nan", None) else "À justifier"
+        lambda x: "Justifiée" if not pd.isna(x) and str(x).strip() != "" else "À justifier"
     )
 
     return df
@@ -61,6 +69,11 @@ def normalize_depenses(df):
 
 def normalize_budget(df):
     df = clean_columns(df)
+
+    required = {"annee", "compte", "budget"}
+    if not required.issubset(df.columns):
+        st.error(f"Colonnes manquantes dans le budget : {required - set(df.columns)}")
+        st.stop()
 
     df["annee"] = df["annee"].astype(float).astype(int)
     df["budget"] = df["budget"].astype(float)
@@ -71,7 +84,7 @@ def normalize_budget(df):
 
 
 # ======================================================
-# CHARGEMENT AUTOMATIQUE DES DONNÉES (ROBUSTE)
+# CHARGEMENT AUTOMATIQUE DES DONNÉES
 # ======================================================
 @st.cache_data(show_spinner=False)
 def load_data():
@@ -104,7 +117,7 @@ def load_data():
 df_dep, df_bud = load_data()
 
 # ======================================================
-# SIDEBAR — CONTRÔLE DONNÉES
+# SIDEBAR — DONNÉES
 # ======================================================
 with st.sidebar:
     st.markdown("## 📂 Données")
