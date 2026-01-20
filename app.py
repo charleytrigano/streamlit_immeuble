@@ -1,4 +1,4 @@
-import stream associated as st
+import streamlit as st
 import pandas as pd
 import unicodedata
 import os
