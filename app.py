@@ -30,11 +30,18 @@ def compute_groupe_compte(compte):
     return compte[:4] if compte.startswith(("621", "622")) else compte[:3]
 
 
-def make_facture_link(url):
+def normalize_dropbox_url(url):
     if pd.isna(url):
-        return "—"
+        return ""
     url = str(url).strip()
-    if url == "":
+    if "dropbox.com" in url:
+        url = url.replace("www.dropbox.com", "dl.dropboxusercontent.com")
+        url = url.replace("?dl=0", "").replace("?dl=1", "")
+    return url
+
+
+def make_facture_link(url):
+    if not url:
         return "—"
     return f'<a href="{url}" target="_blank">📄 Ouvrir</a>'
 
@@ -49,19 +56,15 @@ def normalize_depenses(df):
         if col not in df.columns:
             df[col] = ""
 
-    required = {"annee", "compte", "montant_ttc"}
-    if not required.issubset(df.columns):
-        st.error(f"Colonnes manquantes dans les dépenses : {required - set(df.columns)}")
-        st.stop()
-
     df["annee"] = df["annee"].astype(float).astype(int)
     df["compte"] = df["compte"].astype(str)
     df["montant_ttc"] = df["montant_ttc"].astype(float)
-    df["pdf_url"] = df["pdf_url"].astype(str).str.strip()
+
+    df["pdf_url"] = df["pdf_url"].apply(normalize_dropbox_url)
 
     df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
     df["statut_facture"] = df["pdf_url"].apply(
-        lambda x: "Justifiée" if not pd.isna(x) and str(x).strip() != "" else "À justifier"
+        lambda x: "Justifiée" if x else "À justifier"
     )
 
     return df
@@ -69,11 +72,6 @@ def normalize_depenses(df):
 
 def normalize_budget(df):
     df = clean_columns(df)
-
-    required = {"annee", "compte", "budget"}
-    if not required.issubset(df.columns):
-        st.error(f"Colonnes manquantes dans le budget : {required - set(df.columns)}")
-        st.stop()
 
     df["annee"] = df["annee"].astype(float).astype(int)
     df["budget"] = df["budget"].astype(float)
@@ -129,6 +127,9 @@ with st.sidebar:
     if df_dep is None or df_bud is None:
         st.error("Fichiers CSV manquants ou illisibles dans le dossier /data")
         st.stop()
+
+    st.caption("ℹ️ Le rechargement prend effet si les CSV ont été modifiés sur GitHub.")
+
 
 # ======================================================
 # NAVIGATION
