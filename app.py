@@ -26,6 +26,11 @@ def make_facture_link(url):
     return f'<a href="{url}" target="_blank">📄 Ouvrir</a>'
 
 
+def compute_groupe_compte(compte):
+    compte = str(compte)
+    return compte[:4] if compte.startswith(("621", "622")) else compte[:3]
+
+
 # ======================================================
 # NORMALISATION
 # ======================================================
@@ -46,12 +51,10 @@ def normalize_depenses(df):
     df["montant_ttc"] = df["montant_ttc"].astype(float)
     df["pdf_url"] = df["pdf_url"].astype(str).str.strip()
 
+    # 🔐 GARANTIE STRUCTURELLE
+    df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
     df["statut_facture"] = df["pdf_url"].apply(
         lambda x: "Justifiée" if x not in ("", "nan", None) else "À justifier"
-    )
-
-    df["groupe_compte"] = df["compte"].apply(
-        lambda x: x[:4] if x.startswith(("621", "622")) else x[:3]
     )
 
     return df
@@ -69,15 +72,13 @@ def normalize_budget(df):
     df["budget"] = df["budget"].astype(float)
     df["compte"] = df["compte"].astype(str)
 
-    df["groupe_compte"] = df["compte"].apply(
-        lambda x: x[:4] if x.startswith(("621", "622")) else x[:3]
-    )
+    df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
 
     return df
 
 
 # ======================================================
-# SESSION STATE
+# SESSION STATE (RESET SAFE)
 # ======================================================
 if "df_dep" not in st.session_state:
     st.session_state.df_dep = None
@@ -94,13 +95,25 @@ with st.sidebar:
     dep_csv = st.file_uploader("Dépenses (CSV)", type="csv", key="depenses")
     bud_csv = st.file_uploader("Budget (CSV)", type="csv", key="budget")
 
-    if dep_csv:
-        df = pd.read_csv(dep_csv, sep=None, engine="python", on_bad_lines="skip", encoding="utf-8-sig")
+    if dep_csv is not None:
+        df = pd.read_csv(
+            dep_csv,
+            sep=None,
+            engine="python",
+            on_bad_lines="skip",
+            encoding="utf-8-sig"
+        )
         st.session_state.df_dep = normalize_depenses(df)
         st.success("Dépenses chargées")
 
-    if bud_csv:
-        df = pd.read_csv(bud_csv, sep=None, engine="python", on_bad_lines="skip", encoding="utf-8-sig")
+    if bud_csv is not None:
+        df = pd.read_csv(
+            bud_csv,
+            sep=None,
+            engine="python",
+            on_bad_lines="skip",
+            encoding="utf-8-sig"
+        )
         st.session_state.df_bud = normalize_budget(df)
         st.success("Budget chargé")
 
@@ -125,8 +138,6 @@ page = st.sidebar.radio(
 # ======================================================
 if page == "📊 État des dépenses":
 
-    st.markdown("### 🔎 Filtres")
-
     colf1, colf2, colf3, colf4 = st.columns(4)
 
     with colf1:
@@ -138,8 +149,7 @@ if page == "📊 État des dépenses":
         fournisseurs = ["Tous"] + sorted(df_dep["fournisseur"].unique())
         fournisseur = st.selectbox("Fournisseur", fournisseurs)
     with colf4:
-        statuts = ["Tous", "Justifiée", "À justifier"]
-        statut = st.selectbox("Statut facture", statuts)
+        statut = st.selectbox("Statut facture", ["Tous", "Justifiée", "À justifier"])
 
     df_f = df_dep[df_dep["annee"] == annee].copy()
 
@@ -153,30 +163,16 @@ if page == "📊 État des dépenses":
     df_f["Facture"] = df_f["pdf_url"].apply(make_facture_link)
     df_f["Montant (€)"] = df_f["montant_ttc"].map(lambda x: f"{x:,.2f}".replace(",", " "))
 
-    dep_pos = df_f[df_f["montant_ttc"] > 0]["montant_ttc"].sum()
-    dep_neg = df_f[df_f["montant_ttc"] < 0]["montant_ttc"].sum()
-
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Dépenses brutes (€)", f"{dep_pos:,.0f}".replace(",", " "))
-    k2.metric("Avoirs (€)", f"{dep_neg:,.0f}".replace(",", " "))
-    k3.metric("Dépenses nettes (€)", f"{dep_pos + dep_neg:,.0f}".replace(",", " "))
+    k1.metric("Dépenses brutes (€)", f"{df_f[df_f['montant_ttc']>0]['montant_ttc'].sum():,.0f}".replace(",", " "))
+    k2.metric("Avoirs (€)", f"{df_f[df_f['montant_ttc']<0]['montant_ttc'].sum():,.0f}".replace(",", " "))
+    k3.metric("Dépenses nettes (€)", f"{df_f['montant_ttc'].sum():,.0f}".replace(",", " "))
     k4.metric("% justifiées", f"{(df_f['statut_facture'].eq('Justifiée').mean()*100):.0f} %")
 
-    st.markdown("### 📋 Détail des dépenses")
-
-    df_table = df_f[
-        [
-            "compte",
-            "poste",
-            "fournisseur",
-            "Montant (€)",
-            "statut_facture",
-            "Facture",
-        ]
-    ]
-
     st.markdown(
-        df_table.to_html(escape=False, index=False),
+        df_f[
+            ["compte", "poste", "fournisseur", "Montant (€)", "statut_facture", "Facture"]
+        ].to_html(escape=False, index=False),
         unsafe_allow_html=True
     )
 
@@ -190,25 +186,18 @@ if page == "💰 Budget":
     df_b = df_bud[df_bud["annee"] == annee].copy()
 
     st.metric("Budget total (€)", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
-
     st.data_editor(df_b, num_rows="dynamic", use_container_width=True)
 
 
 # ======================================================
-# 📊 BUDGET VS RÉEL — FILTRES + KPI
+# 📊 BUDGET VS RÉEL
 # ======================================================
 if page == "📊 Budget vs Réel":
 
-    st.markdown("### 🔎 Filtres")
+    annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
 
-    colf1, colf2 = st.columns(2)
-    with colf1:
-        annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
-    with colf2:
-        afficher_depassements = st.checkbox("Uniquement les dépassements")
-
-    dep = df_dep[df_dep["annee"] == annee].copy()
-    bud = df_bud[df_bud["annee"] == annee].copy()
+    dep = df_dep[df_dep["annee"] == annee]
+    bud = df_bud[df_bud["annee"] == annee]
 
     reel = dep.groupby("groupe_compte")["montant_ttc"].sum().reset_index()
     comp = bud.merge(reel, on="groupe_compte", how="left").fillna(0)
@@ -216,25 +205,9 @@ if page == "📊 Budget vs Réel":
     comp["écart (€)"] = comp["montant_ttc"] - comp["budget"]
     comp["écart (%)"] = (comp["écart (€)"] / comp["budget"] * 100).round(1)
 
-    if afficher_depassements:
-        comp = comp[comp["écart (€)"] > 0]
-
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Budget total (€)", f"{comp['budget'].sum():,.0f}".replace(",", " "))
-    k2.metric("Réel (€)", f"{comp['montant_ttc'].sum():,.0f}".replace(",", " "))
-    k3.metric("Écart (€)", f"{comp['écart (€)'].sum():,.0f}".replace(",", " "))
-
-    st.markdown("### 📊 Comparaison Budget vs Réel")
-
     st.dataframe(
         comp[
-            [
-                "groupe_compte",
-                "budget",
-                "montant_ttc",
-                "écart (€)",
-                "écart (%)",
-            ]
+            ["groupe_compte", "budget", "montant_ttc", "écart (€)", "écart (%)"]
         ],
-        use_container_width=True,
+        use_container_width=True
     )
