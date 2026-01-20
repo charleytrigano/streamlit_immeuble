@@ -1,4 +1,4 @@
-import streamlit as st
+import stream associated as st
 import pandas as pd
 import unicodedata
 import os
@@ -27,13 +27,19 @@ def facture_status(row):
     if raw_id == "" or raw_id.lower() == "nan":
         return "❌ À justifier", None
 
-    # Si l'année n'est pas déjà incluse, on la préfixe
-    if not raw_id.startswith(str(row["annee"])):
-        piece_id = f"{row['annee']} - {raw_id}"
-    else:
-        piece_id = raw_id
+    # Normalisation forte du piece_id
+    pid = (
+        raw_id
+        .replace("\u00a0", " ")
+        .replace("-", " - ")
+    )
+    pid = " ".join(pid.split())
 
-    path = f"factures/{row['annee']}/{piece_id}.pdf"
+    # Préfixe année si absent
+    if not pid.startswith(str(row["annee"])):
+        pid = f"{row['annee']} - {pid}"
+
+    path = f"factures/{row['annee']}/{pid}.pdf"
 
     if os.path.exists(path):
         return "✅ OK", path
@@ -132,38 +138,8 @@ with st.sidebar:
 # ======================================================
 if page == "📊 État des dépenses":
 
-    colf1, colf2, colf3 = st.columns(3)
-    with colf1:
-        annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
-    with colf2:
-        groupes = sorted(df_dep["compte"].str[:2].unique())
-        groupe = st.selectbox("Groupe de comptes", ["Tous"] + groupes)
-    with colf3:
-        type_flux = st.selectbox("Type", ["Tous", "Dépenses", "Avoirs"])
-
+    annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
     df_f = df_dep[df_dep["annee"] == annee].copy()
-
-    if groupe != "Tous":
-        df_f = df_f[df_f["compte"].str.startswith(groupe)]
-
-    fournisseurs = ["Tous"] + sorted(df_f["fournisseur"].unique())
-    postes = ["Tous"] + sorted(df_f["poste"].unique())
-
-    colf4, colf5 = st.columns(2)
-    with colf4:
-        fournisseur = st.selectbox("Fournisseur", fournisseurs)
-    with colf5:
-        poste = st.selectbox("Poste", postes)
-
-    if fournisseur != "Tous":
-        df_f = df_f[df_f["fournisseur"] == fournisseur]
-    if poste != "Tous":
-        df_f = df_f[df_f["poste"] == poste]
-
-    if type_flux == "Dépenses":
-        df_f = df_f[df_f["montant_ttc"] > 0]
-    elif type_flux == "Avoirs":
-        df_f = df_f[df_f["montant_ttc"] < 0]
 
     df_f[["statut_facture", "facture_path"]] = df_f.apply(
         lambda r: pd.Series(facture_status(r)), axis=1
@@ -172,13 +148,12 @@ if page == "📊 État des dépenses":
     dep_pos = df_f[df_f["montant_ttc"] > 0]["montant_ttc"].sum()
     dep_neg = df_f[df_f["montant_ttc"] < 0]["montant_ttc"].sum()
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Dépenses brutes (€)", f"{dep_pos:,.0f}".replace(",", " "))
-    col2.metric("Avoirs (€)", f"{dep_neg:,.0f}".replace(",", " "))
-    col3.metric("Dépenses nettes (€)", f"{dep_pos + dep_neg:,.0f}".replace(",", " "))
-    col4.metric("Lignes", len(df_f))
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Dépenses brutes (€)", f"{dep_pos:,.0f}".replace(",", " "))
+    c2.metric("Avoirs (€)", f"{dep_neg:,.0f}".replace(",", " "))
+    c3.metric("Dépenses nettes (€)", f"{dep_pos + dep_neg:,.0f}".replace(",", " "))
+    c4.metric("Lignes", len(df_f))
 
-    st.markdown("### 📋 Détail des dépenses")
     st.dataframe(
         df_f[
             [
@@ -220,18 +195,9 @@ if page == "💰 Budget":
     annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()))
     df_b = df_bud[df_bud["annee"] == annee].copy()
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Budget total (€)", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
-    col2.metric("Comptes budgétés", len(df_b))
-    col3.metric("Groupes", df_b["compte"].str[:2].nunique())
+    st.metric("Budget total (€)", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
 
-    st.markdown("### ✏️ Ajouter / Modifier / Supprimer le budget")
-
-    df_edit = st.data_editor(
-        df_b,
-        num_rows="dynamic",
-        use_container_width=True
-    )
+    df_edit = st.data_editor(df_b, num_rows="dynamic", use_container_width=True)
 
     df_other = df_bud[df_bud["annee"] != annee]
     st.session_state.df_bud = pd.concat([df_other, df_edit], ignore_index=True)
@@ -249,7 +215,6 @@ if page == "💰 Budget":
 if page == "📊 Budget vs Réel":
 
     annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
-    only_over = st.checkbox("Uniquement les dépassements")
 
     dep = df_dep[df_dep["annee"] == annee].copy()
     bud = df_bud[df_bud["annee"] == annee].copy()
@@ -276,29 +241,7 @@ if page == "📊 Budget vs Réel":
     comp["ecart_eur"] = comp["depenses_nettes"] - comp["budget"]
     comp["ecart_pct"] = comp["ecart_eur"] / comp["budget"] * 100
 
-    if only_over:
-        comp = comp[comp["ecart_eur"] > 0]
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Budget (€)", f"{comp['budget'].sum():,.0f}".replace(",", " "))
-    col2.metric("Réel net (€)", f"{comp['depenses_nettes'].sum():,.0f}".replace(",", " "))
-    col3.metric("Écart (€)", f"{comp['ecart_eur'].sum():,.0f}".replace(",", " "))
-    col4.metric(
-        "Écart (%)",
-        f"{(comp['ecart_eur'].sum() / comp['budget'].sum() * 100):.1f} %"
-        if comp['budget'].sum() != 0 else "-"
-    )
-
-    st.markdown("### Détail Budget vs Réel")
     st.dataframe(
-        comp.reset_index()[[
-            "compte",
-            "budget",
-            "depenses_brutes",
-            "avoirs",
-            "depenses_nettes",
-            "ecart_eur",
-            "ecart_pct",
-        ]],
+        comp.reset_index(),
         use_container_width=True,
     )
