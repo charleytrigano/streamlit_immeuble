@@ -197,6 +197,23 @@ if page == "📊 État des dépenses":
         use_container_width=True,
     )
 
+st.markdown("### 📄 Facture associée")
+
+if "pdf_url" in df_edit.columns:
+    pdfs = df_edit["pdf_url"].dropna().unique()
+
+    if len(pdfs) > 0:
+        pdf_sel = st.selectbox("Choisir une facture", pdfs)
+        st.markdown(
+            f"[📄 Ouvrir la facture]({pdf_sel})",
+            unsafe_allow_html=True
+        )
+    else:
+        st.info("Aucune facture PDF renseignée pour cette sélection.")
+else:
+    st.warning("Colonne 'pdf_url' absente du CSV.")
+
+
 
 # ======================================================
 # 💰 BUDGET
