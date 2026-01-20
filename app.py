@@ -1,12 +1,17 @@
 import streamlit as st
 import pandas as pd
 import unicodedata
+from pathlib import Path
 
 # ======================================================
 # CONFIG
 # ======================================================
 st.set_page_config(page_title="Pilotage des charges", layout="wide")
 st.title("Pilotage des charges de l’immeuble")
+
+DATA_DIR = Path("data")
+DEP_FILE = DATA_DIR / "base_depenses_immeuble.csv"
+BUD_FILE = DATA_DIR / "budget_comptes_generaux.csv"
 
 # ======================================================
 # OUTILS
@@ -20,15 +25,15 @@ def clean_columns(df):
     return df
 
 
+def compute_groupe_compte(compte):
+    compte = str(compte)
+    return compte[:4] if compte.startswith(("621", "622")) else compte[:3]
+
+
 def make_facture_link(url):
     if not url or str(url).lower() == "nan":
         return "—"
     return f'<a href="{url}" target="_blank">📄 Ouvrir</a>'
-
-
-def compute_groupe_compte(compte):
-    compte = str(compte)
-    return compte[:4] if compte.startswith(("621", "622")) else compte[:3]
 
 
 # ======================================================
@@ -41,17 +46,11 @@ def normalize_depenses(df):
         if col not in df.columns:
             df[col] = ""
 
-    required = {"annee", "compte", "montant_ttc"}
-    if not required.issubset(df.columns):
-        st.error(f"Colonnes manquantes dans les dépenses : {required - set(df.columns)}")
-        st.stop()
-
     df["annee"] = df["annee"].astype(float).astype(int)
     df["compte"] = df["compte"].astype(str)
     df["montant_ttc"] = df["montant_ttc"].astype(float)
     df["pdf_url"] = df["pdf_url"].astype(str).str.strip()
 
-    # 🔐 GARANTIE STRUCTURELLE
     df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
     df["statut_facture"] = df["pdf_url"].apply(
         lambda x: "Justifiée" if x not in ("", "nan", None) else "À justifier"
@@ -63,67 +62,47 @@ def normalize_depenses(df):
 def normalize_budget(df):
     df = clean_columns(df)
 
-    required = {"annee", "compte", "budget"}
-    if not required.issubset(df.columns):
-        st.error(f"Colonnes manquantes dans le budget : {required - set(df.columns)}")
-        st.stop()
-
     df["annee"] = df["annee"].astype(float).astype(int)
     df["budget"] = df["budget"].astype(float)
     df["compte"] = df["compte"].astype(str)
-
     df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
 
     return df
 
 
 # ======================================================
-# SESSION STATE (RESET SAFE)
+# CHARGEMENT AUTOMATIQUE DES DONNÉES
 # ======================================================
-if "df_dep" not in st.session_state:
-    st.session_state.df_dep = None
-if "df_bud" not in st.session_state:
-    st.session_state.df_bud = None
+@st.cache_data(show_spinner=False)
+def load_data():
+    if not DEP_FILE.exists() or not BUD_FILE.exists():
+        return None, None
+
+    df_dep = normalize_depenses(
+        pd.read_csv(DEP_FILE, encoding="utf-8-sig")
+    )
+    df_bud = normalize_budget(
+        pd.read_csv(BUD_FILE, encoding="utf-8-sig")
+    )
+
+    return df_dep, df_bud
 
 
+df_dep, df_bud = load_data()
+
 # ======================================================
-# SIDEBAR — CHARGEMENT CSV
+# SIDEBAR — ACTIONS DONNÉES
 # ======================================================
 with st.sidebar:
-    st.markdown("## 📂 Chargement des données")
+    st.markdown("## 📂 Données")
 
-    dep_csv = st.file_uploader("Dépenses (CSV)", type="csv", key="depenses")
-    bud_csv = st.file_uploader("Budget (CSV)", type="csv", key="budget")
+    if st.button("🔄 Recharger les données"):
+        st.cache_data.clear()
+        st.experimental_rerun()
 
-    if dep_csv is not None:
-        df = pd.read_csv(
-            dep_csv,
-            sep=None,
-            engine="python",
-            on_bad_lines="skip",
-            encoding="utf-8-sig"
-        )
-        st.session_state.df_dep = normalize_depenses(df)
-        st.success("Dépenses chargées")
-
-    if bud_csv is not None:
-        df = pd.read_csv(
-            bud_csv,
-            sep=None,
-            engine="python",
-            on_bad_lines="skip",
-            encoding="utf-8-sig"
-        )
-        st.session_state.df_bud = normalize_budget(df)
-        st.success("Budget chargé")
-
-if st.session_state.df_dep is None or st.session_state.df_bud is None:
-    st.info("Veuillez charger les dépenses et le budget.")
-    st.stop()
-
-df_dep = st.session_state.df_dep
-df_bud = st.session_state.df_bud
-
+    if df_dep is None or df_bud is None:
+        st.error("Fichiers CSV manquants dans le dossier /data")
+        st.stop()
 
 # ======================================================
 # NAVIGATION
@@ -134,7 +113,7 @@ page = st.sidebar.radio(
 )
 
 # ======================================================
-# 📊 ÉTAT DES DÉPENSES — FILTRES COMPLETS
+# 📊 ÉTAT DES DÉPENSES
 # ======================================================
 if page == "📊 État des dépenses":
 
@@ -143,13 +122,20 @@ if page == "📊 État des dépenses":
     with colf1:
         annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
     with colf2:
-        groupes = ["Tous"] + sorted(df_dep["groupe_compte"].unique())
-        groupe = st.selectbox("Groupe de comptes", groupes)
+        groupe = st.selectbox(
+            "Groupe de comptes",
+            ["Tous"] + sorted(df_dep["groupe_compte"].unique())
+        )
     with colf3:
-        fournisseurs = ["Tous"] + sorted(df_dep["fournisseur"].unique())
-        fournisseur = st.selectbox("Fournisseur", fournisseurs)
+        fournisseur = st.selectbox(
+            "Fournisseur",
+            ["Tous"] + sorted(df_dep["fournisseur"].unique())
+        )
     with colf4:
-        statut = st.selectbox("Statut facture", ["Tous", "Justifiée", "À justifier"])
+        statut = st.selectbox(
+            "Statut facture",
+            ["Tous", "Justifiée", "À justifier"]
+        )
 
     df_f = df_dep[df_dep["annee"] == annee].copy()
 
@@ -161,13 +147,9 @@ if page == "📊 État des dépenses":
         df_f = df_f[df_f["statut_facture"] == statut]
 
     df_f["Facture"] = df_f["pdf_url"].apply(make_facture_link)
-    df_f["Montant (€)"] = df_f["montant_ttc"].map(lambda x: f"{x:,.2f}".replace(",", " "))
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Dépenses brutes (€)", f"{df_f[df_f['montant_ttc']>0]['montant_ttc'].sum():,.0f}".replace(",", " "))
-    k2.metric("Avoirs (€)", f"{df_f[df_f['montant_ttc']<0]['montant_ttc'].sum():,.0f}".replace(",", " "))
-    k3.metric("Dépenses nettes (€)", f"{df_f['montant_ttc'].sum():,.0f}".replace(",", " "))
-    k4.metric("% justifiées", f"{(df_f['statut_facture'].eq('Justifiée').mean()*100):.0f} %")
+    df_f["Montant (€)"] = df_f["montant_ttc"].map(
+        lambda x: f"{x:,.2f}".replace(",", " ")
+    )
 
     st.markdown(
         df_f[
@@ -176,18 +158,16 @@ if page == "📊 État des dépenses":
         unsafe_allow_html=True
     )
 
-
 # ======================================================
 # 💰 BUDGET
 # ======================================================
 if page == "💰 Budget":
 
     annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()))
-    df_b = df_bud[df_bud["annee"] == annee].copy()
+    df_b = df_bud[df_bud["annee"] == annee]
 
     st.metric("Budget total (€)", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
-    st.data_editor(df_b, num_rows="dynamic", use_container_width=True)
-
+    st.dataframe(df_b, use_container_width=True)
 
 # ======================================================
 # 📊 BUDGET VS RÉEL
@@ -202,12 +182,12 @@ if page == "📊 Budget vs Réel":
     reel = dep.groupby("groupe_compte")["montant_ttc"].sum().reset_index()
     comp = bud.merge(reel, on="groupe_compte", how="left").fillna(0)
 
-    comp["écart (€)"] = comp["montant_ttc"] - comp["budget"]
-    comp["écart (%)"] = (comp["écart (€)"] / comp["budget"] * 100).round(1)
+    comp["Écart (€)"] = comp["montant_ttc"] - comp["budget"]
+    comp["Écart (%)"] = (comp["Écart (€)"] / comp["budget"] * 100).round(1)
 
     st.dataframe(
         comp[
-            ["groupe_compte", "budget", "montant_ttc", "écart (€)", "écart (%)"]
+            ["groupe_compte", "budget", "montant_ttc", "Écart (€)", "Écart (%)"]
         ],
         use_container_width=True
     )
