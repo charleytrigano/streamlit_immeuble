@@ -56,10 +56,14 @@ def normalize_depenses(df):
         if col not in df.columns:
             df[col] = ""
 
+    required = {"annee", "compte", "montant_ttc"}
+    if not required.issubset(df.columns):
+        st.error(f"Colonnes manquantes dans les dépenses : {required - set(df.columns)}")
+        st.stop()
+
     df["annee"] = df["annee"].astype(float).astype(int)
     df["compte"] = df["compte"].astype(str)
     df["montant_ttc"] = df["montant_ttc"].astype(float)
-
     df["pdf_url"] = df["pdf_url"].apply(normalize_dropbox_url)
 
     df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
@@ -72,6 +76,11 @@ def normalize_depenses(df):
 
 def normalize_budget(df):
     df = clean_columns(df)
+
+    required = {"annee", "compte", "budget"}
+    if not required.issubset(df.columns):
+        st.error(f"Colonnes manquantes dans le budget : {required - set(df.columns)}")
+        st.stop()
 
     df["annee"] = df["annee"].astype(float).astype(int)
     df["budget"] = df["budget"].astype(float)
@@ -125,11 +134,8 @@ with st.sidebar:
         st.rerun()
 
     if df_dep is None or df_bud is None:
-        st.error("Fichiers CSV manquants ou illisibles dans le dossier /data")
+        st.error("Fichiers CSV manquants ou illisibles dans /data")
         st.stop()
-
-    st.caption("ℹ️ Le rechargement prend effet si les CSV ont été modifiés sur GitHub.")
-
 
 # ======================================================
 # NAVIGATION
@@ -140,25 +146,27 @@ page = st.sidebar.radio(
 )
 
 # ======================================================
-# 📊 ÉTAT DES DÉPENSES
+# 📊 ÉTAT DES DÉPENSES — KPI + FILTRES
 # ======================================================
 if page == "📊 État des dépenses":
 
-    colf1, colf2, colf3, colf4 = st.columns(4)
+    st.markdown("### 🔎 Filtres")
 
-    with colf1:
+    f1, f2, f3, f4 = st.columns(4)
+
+    with f1:
         annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
-    with colf2:
+    with f2:
         groupe = st.selectbox(
             "Groupe de comptes",
             ["Tous"] + sorted(df_dep["groupe_compte"].unique())
         )
-    with colf3:
+    with f3:
         fournisseur = st.selectbox(
             "Fournisseur",
             ["Tous"] + sorted(df_dep["fournisseur"].unique())
         )
-    with colf4:
+    with f4:
         statut = st.selectbox(
             "Statut facture",
             ["Tous", "Justifiée", "À justifier"]
@@ -173,10 +181,24 @@ if page == "📊 État des dépenses":
     if statut != "Tous":
         df_f = df_f[df_f["statut_facture"] == statut]
 
+    # KPI
+    dep_brut = df_f[df_f["montant_ttc"] > 0]["montant_ttc"].sum()
+    avoirs = df_f[df_f["montant_ttc"] < 0]["montant_ttc"].sum()
+    net = dep_brut + avoirs
+    pct_justifie = (df_f["statut_facture"] == "Justifiée").mean() * 100
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Dépenses brutes (€)", f"{dep_brut:,.0f}".replace(",", " "))
+    k2.metric("Avoirs (€)", f"{avoirs:,.0f}".replace(",", " "))
+    k3.metric("Dépenses nettes (€)", f"{net:,.0f}".replace(",", " "))
+    k4.metric("% justifiées", f"{pct_justifie:.0f} %")
+
     df_f["Facture"] = df_f["pdf_url"].apply(make_facture_link)
     df_f["Montant (€)"] = df_f["montant_ttc"].map(
         lambda x: f"{x:,.2f}".replace(",", " ")
     )
+
+    st.markdown("### 📋 Détail des dépenses")
 
     st.markdown(
         df_f[
@@ -197,11 +219,16 @@ if page == "💰 Budget":
     st.dataframe(df_b, use_container_width=True)
 
 # ======================================================
-# 📊 BUDGET VS RÉEL
+# 📊 BUDGET VS RÉEL — KPI + FILTRES
 # ======================================================
 if page == "📊 Budget vs Réel":
 
-    annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
+    f1, f2 = st.columns(2)
+
+    with f1:
+        annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
+    with f2:
+        depassement_only = st.checkbox("Uniquement les dépassements")
 
     dep = df_dep[df_dep["annee"] == annee]
     bud = df_bud[df_bud["annee"] == annee]
@@ -211,6 +238,17 @@ if page == "📊 Budget vs Réel":
 
     comp["Écart (€)"] = comp["montant_ttc"] - comp["budget"]
     comp["Écart (%)"] = (comp["Écart (€)"] / comp["budget"] * 100).round(1)
+
+    if depassement_only:
+        comp = comp[comp["Écart (€)"] > 0]
+
+    # KPI
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Budget (€)", f"{comp['budget'].sum():,.0f}".replace(",", " "))
+    k2.metric("Réel (€)", f"{comp['montant_ttc'].sum():,.0f}".replace(",", " "))
+    k3.metric("Écart total (€)", f"{comp['Écart (€)'].sum():,.0f}".replace(",", " "))
+
+    st.markdown("### 📊 Comparaison Budget vs Réel")
 
     st.dataframe(
         comp[
