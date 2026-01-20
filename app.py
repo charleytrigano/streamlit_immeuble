@@ -13,6 +13,9 @@ DATA_DIR = Path("data")
 DEP_FILE = DATA_DIR / "base_depenses_immeuble.csv"
 BUD_FILE = DATA_DIR / "budget_comptes_generaux.csv"
 
+# ⚠️ À REMPLACER PAR TON LIEN DROPBOX RÉEL
+DROPBOX_BASE_URL = "https://dl.dropboxusercontent.com/s/XXXXXXX/factures"
+
 # ======================================================
 # OUTILS
 # ======================================================
@@ -30,14 +33,11 @@ def compute_groupe_compte(compte):
     return compte[:4] if compte.startswith(("621", "622")) else compte[:3]
 
 
-def normalize_dropbox_url(url):
-    if pd.isna(url):
+def build_pdf_url(annee, piece_id):
+    if pd.isna(piece_id) or str(piece_id).strip() == "":
         return ""
-    url = str(url).strip()
-    if "dropbox.com" in url:
-        url = url.replace("www.dropbox.com", "dl.dropboxusercontent.com")
-        url = url.replace("?dl=0", "").replace("?dl=1", "")
-    return url
+    filename = f"{annee} - {piece_id}.pdf"
+    return f"{DROPBOX_BASE_URL}/{annee}/{filename}"
 
 
 def make_facture_link(url):
@@ -52,7 +52,7 @@ def make_facture_link(url):
 def normalize_depenses(df):
     df = clean_columns(df)
 
-    for col in ["poste", "fournisseur", "piece_id", "pdf_url"]:
+    for col in ["poste", "fournisseur", "piece_id"]:
         if col not in df.columns:
             df[col] = ""
 
@@ -64,11 +64,18 @@ def normalize_depenses(df):
     df["annee"] = df["annee"].astype(float).astype(int)
     df["compte"] = df["compte"].astype(str)
     df["montant_ttc"] = df["montant_ttc"].astype(float)
-    df["pdf_url"] = df["pdf_url"].apply(normalize_dropbox_url)
+    df["piece_id"] = df["piece_id"].astype(str).str.strip()
 
     df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
-    df["statut_facture"] = df["pdf_url"].apply(
-        lambda x: "Justifiée" if x else "À justifier"
+
+    # 🔗 Lien facture automatique
+    df["pdf_url"] = df.apply(
+        lambda r: build_pdf_url(r["annee"], r["piece_id"]),
+        axis=1
+    )
+
+    df["statut_facture"] = df["piece_id"].apply(
+        lambda x: "Justifiée" if x and x.lower() != "nan" else "À justifier"
     )
 
     return df
@@ -91,7 +98,7 @@ def normalize_budget(df):
 
 
 # ======================================================
-# CHARGEMENT AUTOMATIQUE DES DONNÉES
+# CHARGEMENT AUTOMATIQUE
 # ======================================================
 @st.cache_data(show_spinner=False)
 def load_data():
@@ -146,7 +153,7 @@ page = st.sidebar.radio(
 )
 
 # ======================================================
-# 📊 ÉTAT DES DÉPENSES — KPI + FILTRES
+# 📊 ÉTAT DES DÉPENSES
 # ======================================================
 if page == "📊 État des dépenses":
 
@@ -219,7 +226,7 @@ if page == "💰 Budget":
     st.dataframe(df_b, use_container_width=True)
 
 # ======================================================
-# 📊 BUDGET VS RÉEL — KPI + FILTRES
+# 📊 BUDGET VS RÉEL
 # ======================================================
 if page == "📊 Budget vs Réel":
 
@@ -242,13 +249,10 @@ if page == "📊 Budget vs Réel":
     if depassement_only:
         comp = comp[comp["Écart (€)"] > 0]
 
-    # KPI
     k1, k2, k3 = st.columns(3)
     k1.metric("Budget (€)", f"{comp['budget'].sum():,.0f}".replace(",", " "))
     k2.metric("Réel (€)", f"{comp['montant_ttc'].sum():,.0f}".replace(",", " "))
     k3.metric("Écart total (€)", f"{comp['Écart (€)'].sum():,.0f}".replace(",", " "))
-
-    st.markdown("### 📊 Comparaison Budget vs Réel")
 
     st.dataframe(
         comp[
