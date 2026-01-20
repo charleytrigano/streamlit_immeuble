@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import unicodedata
@@ -12,9 +13,6 @@ st.title("Pilotage des charges de l’immeuble")
 DATA_DIR = Path("data")
 DEP_FILE = DATA_DIR / "base_depenses_immeuble.csv"
 BUD_FILE = DATA_DIR / "budget_comptes_generaux.csv"
-
-# ⚠️ À REMPLACER PAR TON LIEN DROPBOX RÉEL
-DROPBOX_BASE_URL = "https://dl.dropboxusercontent.com/s/XXXXXXX/factures"
 
 # ======================================================
 # OUTILS
@@ -33,15 +31,8 @@ def compute_groupe_compte(compte):
     return compte[:4] if compte.startswith(("621", "622")) else compte[:3]
 
 
-def build_pdf_url(annee, piece_id):
-    if pd.isna(piece_id) or str(piece_id).strip() == "":
-        return ""
-    filename = f"{annee} - {piece_id}.pdf"
-    return f"{DROPBOX_BASE_URL}/{annee}/{filename}"
-
-
 def make_facture_link(url):
-    if not url:
+    if pd.isna(url) or str(url).strip() == "":
         return "—"
     return f'<a href="{url}" target="_blank">📄 Ouvrir</a>'
 
@@ -52,7 +43,7 @@ def make_facture_link(url):
 def normalize_depenses(df):
     df = clean_columns(df)
 
-    for col in ["poste", "fournisseur", "piece_id"]:
+    for col in ["poste", "fournisseur", "piece_id", "pdf_url"]:
         if col not in df.columns:
             df[col] = ""
 
@@ -64,18 +55,12 @@ def normalize_depenses(df):
     df["annee"] = df["annee"].astype(float).astype(int)
     df["compte"] = df["compte"].astype(str)
     df["montant_ttc"] = df["montant_ttc"].astype(float)
-    df["piece_id"] = df["piece_id"].astype(str).str.strip()
+    df["pdf_url"] = df["pdf_url"].astype(str).str.strip()
 
     df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
 
-    # 🔗 Lien facture automatique
-    df["pdf_url"] = df.apply(
-        lambda r: build_pdf_url(r["annee"], r["piece_id"]),
-        axis=1
-    )
-
-    df["statut_facture"] = df["piece_id"].apply(
-        lambda x: "Justifiée" if x and x.lower() != "nan" else "À justifier"
+    df["statut_facture"] = df["pdf_url"].apply(
+        lambda x: "Justifiée" if x not in ("", "nan") else "À justifier"
     )
 
     return df
@@ -98,7 +83,7 @@ def normalize_budget(df):
 
 
 # ======================================================
-# CHARGEMENT AUTOMATIQUE
+# CHARGEMENT AUTOMATIQUE DES DONNÉES
 # ======================================================
 @st.cache_data(show_spinner=False)
 def load_data():
@@ -141,7 +126,7 @@ with st.sidebar:
         st.rerun()
 
     if df_dep is None or df_bud is None:
-        st.error("Fichiers CSV manquants ou illisibles dans /data")
+        st.error("Fichiers CSV manquants ou illisibles dans le dossier /data")
         st.stop()
 
 # ======================================================
