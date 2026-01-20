@@ -22,11 +22,9 @@ def clean_columns(df):
 
 def facture_status(row):
     url = str(row.get("pdf_url", "")).strip()
-
     if url == "" or url.lower() == "nan":
-        return "❌ À justifier", None
-
-    return "📄 Disponible", url
+        return "❌ À justifier"
+    return "📄 Disponible"
 
 
 # ======================================================
@@ -85,40 +83,18 @@ if "df_bud" not in st.session_state:
 with st.sidebar:
     st.markdown("## 📂 Chargement des données")
 
-    dep_csv = st.file_uploader(
-        "Dépenses (CSV)",
-        type="csv",
-        key="upload_depenses"
-    )
+    dep_csv = st.file_uploader("Dépenses (CSV)", type="csv", key="dep")
+    bud_csv = st.file_uploader("Budget (CSV)", type="csv", key="bud")
 
-    bud_csv = st.file_uploader(
-        "Budget (CSV)",
-        type="csv",
-        key="upload_budget"
-    )
-
-    if dep_csv is not None:
-        df = pd.read_csv(
-            dep_csv,
-            sep=None,
-            engine="python",
-            on_bad_lines="skip",
-            encoding="utf-8-sig"
-        )
+    if dep_csv:
+        df = pd.read_csv(dep_csv, sep=None, engine="python", on_bad_lines="skip", encoding="utf-8-sig")
         st.session_state.df_dep = normalize_depenses(df)
         st.success("Dépenses chargées")
 
-    if bud_csv is not None:
-        df = pd.read_csv(
-            bud_csv,
-            sep=None,
-            engine="python",
-            on_bad_lines="skip",
-            encoding="utf-8-sig"
-        )
+    if bud_csv:
+        df = pd.read_csv(bud_csv, sep=None, engine="python", on_bad_lines="skip", encoding="utf-8-sig")
         st.session_state.df_bud = normalize_budget(df)
         st.success("Budget chargé")
-
 
 if st.session_state.df_dep is None or st.session_state.df_bud is None:
     st.info("Veuillez charger les dépenses et le budget.")
@@ -138,16 +114,14 @@ page = st.sidebar.radio(
 
 
 # ======================================================
-# 📊 ÉTAT DES DÉPENSES
+# 📊 ÉTAT DES DÉPENSES — AVEC BOUTON PAR LIGNE
 # ======================================================
 if page == "📊 État des dépenses":
 
     annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
     df_f = df_dep[df_dep["annee"] == annee].copy()
 
-    df_f[["statut_facture", "lien_facture"]] = df_f.apply(
-        lambda r: pd.Series(facture_status(r)), axis=1
-    )
+    df_f["statut_facture"] = df_f.apply(facture_status, axis=1)
 
     dep_pos = df_f[df_f["montant_ttc"] > 0]["montant_ttc"].sum()
     dep_neg = df_f[df_f["montant_ttc"] < 0]["montant_ttc"].sum()
@@ -158,41 +132,34 @@ if page == "📊 État des dépenses":
     c3.metric("Dépenses nettes (€)", f"{dep_pos + dep_neg:,.0f}".replace(",", " "))
     c4.metric("Lignes", len(df_f))
 
+    st.markdown("### 📋 Tableau des dépenses")
     st.dataframe(
         df_f[
             [
-                "annee",
                 "compte",
                 "poste",
                 "fournisseur",
                 "montant_ttc",
-                "piece_id",
                 "statut_facture",
-                "pdf_url",
             ]
         ],
         use_container_width=True,
     )
 
-    st.markdown("### 📄 Ouvrir une facture")
+    st.markdown("### 📄 Accès direct aux factures")
 
-    factures_ok = df_f[df_f["pdf_url"] != ""]
+    for i, row in df_f.iterrows():
+        cols = st.columns([2, 2, 2, 1, 1])
+        cols[0].write(row["poste"])
+        cols[1].write(row["fournisseur"])
+        cols[2].write(f"{row['montant_ttc']} €")
 
-    if not factures_ok.empty:
-        idx = st.selectbox(
-            "Choisir une dépense",
-            factures_ok.index,
-            format_func=lambda i: (
-                f"{factures_ok.loc[i,'poste']} – "
-                f"{factures_ok.loc[i,'fournisseur']} – "
-                f"{factures_ok.loc[i,'montant_ttc']} €"
-            )
-        )
+        if row["pdf_url"]:
+            cols[3].link_button("📄 Ouvrir", row["pdf_url"])
+        else:
+            cols[3].write("—")
 
-        st.link_button(
-            "📄 Ouvrir la facture (Dropbox)",
-            factures_ok.loc[idx, "pdf_url"]
-        )
+        cols[4].write(row["statut_facture"])
 
 
 # ======================================================
@@ -203,23 +170,9 @@ if page == "💰 Budget":
     annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()))
     df_b = df_bud[df_bud["annee"] == annee].copy()
 
-    st.metric(
-        "Budget total (€)",
-        f"{df_b['budget'].sum():,.0f}".replace(",", " ")
-    )
+    st.metric("Budget total (€)", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
 
-    st.markdown("### ✏️ Ajouter / Modifier / Supprimer le budget")
-    df_edit = st.data_editor(
-        df_b,
-        num_rows="dynamic",
-        use_container_width=True
-    )
-
-    df_other = df_bud[df_bud["annee"] != annee]
-    st.session_state.df_bud = pd.concat(
-        [df_other, df_edit],
-        ignore_index=True
-    )
+    st.data_editor(df_b, num_rows="dynamic", use_container_width=True)
 
 
 # ======================================================
