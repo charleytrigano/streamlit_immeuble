@@ -185,6 +185,11 @@ if page == "📊 État des dépenses":
     k3.metric("Dépenses nettes (€)", f"{net:,.0f}".replace(",", " "))
     k4.metric("% justifiées", f"{pct_justifie:.0f} %")
 
+    df_f["Facture"] = df_f.apply(
+    lambda r: f'{r["piece_id"]} – <a href="{r["pdf_url"]}" target="_blank">📄 Ouvrir</a>'
+    if r["pdf_url"] not in ("", "nan") else r["piece_id"],
+    axis=1
+)
     df_f["Facture"] = df_f["pdf_url"].apply(make_facture_link)
     df_f["Montant (€)"] = df_f["montant_ttc"].map(
         lambda x: f"{x:,.2f}".replace(",", " ")
