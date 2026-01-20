@@ -20,11 +20,10 @@ def clean_columns(df):
     return df
 
 
-def facture_status(row):
-    url = str(row.get("pdf_url", "")).strip()
-    if url == "" or url.lower() == "nan":
-        return "❌ À justifier"
-    return "📄 Disponible"
+def make_facture_link(url):
+    if not url or str(url).lower() == "nan":
+        return "—"
+    return f'<a href="{url}" target="_blank">📄 Ouvrir</a>'
 
 
 # ======================================================
@@ -62,6 +61,7 @@ def normalize_budget(df):
     df["budget"] = df["budget"].astype(float)
     df["compte"] = df["compte"].astype(str)
 
+    # 621 / 622 sur 4 chiffres, sinon 3
     df["compte"] = df["compte"].apply(
         lambda x: x[:4] if x.startswith(("621", "622")) else x[:3]
     )
@@ -83,16 +83,28 @@ if "df_bud" not in st.session_state:
 with st.sidebar:
     st.markdown("## 📂 Chargement des données")
 
-    dep_csv = st.file_uploader("Dépenses (CSV)", type="csv", key="dep")
-    bud_csv = st.file_uploader("Budget (CSV)", type="csv", key="bud")
+    dep_csv = st.file_uploader("Dépenses (CSV)", type="csv", key="depenses")
+    bud_csv = st.file_uploader("Budget (CSV)", type="csv", key="budget")
 
     if dep_csv:
-        df = pd.read_csv(dep_csv, sep=None, engine="python", on_bad_lines="skip", encoding="utf-8-sig")
+        df = pd.read_csv(
+            dep_csv,
+            sep=None,
+            engine="python",
+            on_bad_lines="skip",
+            encoding="utf-8-sig"
+        )
         st.session_state.df_dep = normalize_depenses(df)
         st.success("Dépenses chargées")
 
     if bud_csv:
-        df = pd.read_csv(bud_csv, sep=None, engine="python", on_bad_lines="skip", encoding="utf-8-sig")
+        df = pd.read_csv(
+            bud_csv,
+            sep=None,
+            engine="python",
+            on_bad_lines="skip",
+            encoding="utf-8-sig"
+        )
         st.session_state.df_bud = normalize_budget(df)
         st.success("Budget chargé")
 
@@ -114,14 +126,17 @@ page = st.sidebar.radio(
 
 
 # ======================================================
-# 📊 ÉTAT DES DÉPENSES — AVEC BOUTON PAR LIGNE
+# 📊 ÉTAT DES DÉPENSES (COLONNE FACTURE CLIQUABLE)
 # ======================================================
 if page == "📊 État des dépenses":
 
     annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
     df_f = df_dep[df_dep["annee"] == annee].copy()
 
-    df_f["statut_facture"] = df_f.apply(facture_status, axis=1)
+    df_f["Facture"] = df_f["pdf_url"].apply(make_facture_link)
+    df_f["Montant (€)"] = df_f["montant_ttc"].map(
+        lambda x: f"{x:,.2f}".replace(",", " ")
+    )
 
     dep_pos = df_f[df_f["montant_ttc"] > 0]["montant_ttc"].sum()
     dep_neg = df_f[df_f["montant_ttc"] < 0]["montant_ttc"].sum()
@@ -132,34 +147,25 @@ if page == "📊 État des dépenses":
     c3.metric("Dépenses nettes (€)", f"{dep_pos + dep_neg:,.0f}".replace(",", " "))
     c4.metric("Lignes", len(df_f))
 
-    st.markdown("### 📋 Tableau des dépenses")
-    st.dataframe(
-        df_f[
-            [
-                "compte",
-                "poste",
-                "fournisseur",
-                "montant_ttc",
-                "statut_facture",
-            ]
-        ],
-        use_container_width=True,
+    st.markdown("### 📋 Détail des dépenses")
+
+    df_table = df_f[
+        [
+            "compte",
+            "poste",
+            "fournisseur",
+            "Montant (€)",
+            "Facture",
+        ]
+    ].copy()
+
+    st.markdown(
+        df_table.to_html(
+            escape=False,
+            index=False
+        ),
+        unsafe_allow_html=True
     )
-
-    st.markdown("### 📄 Accès direct aux factures")
-
-    for i, row in df_f.iterrows():
-        cols = st.columns([2, 2, 2, 1, 1])
-        cols[0].write(row["poste"])
-        cols[1].write(row["fournisseur"])
-        cols[2].write(f"{row['montant_ttc']} €")
-
-        if row["pdf_url"]:
-            cols[3].link_button("📄 Ouvrir", row["pdf_url"])
-        else:
-            cols[3].write("—")
-
-        cols[4].write(row["statut_facture"])
 
 
 # ======================================================
@@ -170,9 +176,23 @@ if page == "💰 Budget":
     annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()))
     df_b = df_bud[df_bud["annee"] == annee].copy()
 
-    st.metric("Budget total (€)", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
+    st.metric(
+        "Budget total (€)",
+        f"{df_b['budget'].sum():,.0f}".replace(",", " ")
+    )
 
-    st.data_editor(df_b, num_rows="dynamic", use_container_width=True)
+    st.markdown("### ✏️ Ajouter / Modifier / Supprimer le budget")
+    df_edit = st.data_editor(
+        df_b,
+        num_rows="dynamic",
+        use_container_width=True
+    )
+
+    df_other = df_bud[df_bud["annee"] != annee]
+    st.session_state.df_bud = pd.concat(
+        [df_other, df_edit],
+        ignore_index=True
+    )
 
 
 # ======================================================
@@ -199,12 +219,16 @@ if page == "📊 Budget vs Réel":
     dep_neg = dep[dep["montant_ttc"] < 0].groupby("compte_budget")["montant_ttc"].sum()
 
     comp = bud.set_index("compte").copy()
-    comp["depenses_brutes"] = dep_pos
+    comp["dépenses_brutes"] = dep_pos
     comp["avoirs"] = dep_neg
     comp = comp.fillna(0)
 
-    comp["depenses_nettes"] = comp["depenses_brutes"] + comp["avoirs"]
-    comp["ecart_eur"] = comp["depenses_nettes"] - comp["budget"]
-    comp["ecart_pct"] = comp["ecart_eur"] / comp["budget"] * 100
+    comp["dépenses_nettes"] = comp["dépenses_brutes"] + comp["avoirs"]
+    comp["écart (€)"] = comp["dépenses_nettes"] - comp["budget"]
+    comp["écart (%)"] = comp["écart (€)"] / comp["budget"] * 100
 
-    st.dataframe(comp.reset_index(), use_container_width=True)
+    st.markdown("### 📊 Comparaison Budget vs Réel")
+    st.dataframe(
+        comp.reset_index(),
+        use_container_width=True
+    )
