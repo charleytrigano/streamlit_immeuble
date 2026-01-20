@@ -71,7 +71,7 @@ def normalize_budget(df):
 
 
 # ======================================================
-# CHARGEMENT AUTOMATIQUE DES DONNÉES
+# CHARGEMENT AUTOMATIQUE DES DONNÉES (ROBUSTE)
 # ======================================================
 @st.cache_data(show_spinner=False)
 def load_data():
@@ -79,10 +79,23 @@ def load_data():
         return None, None
 
     df_dep = normalize_depenses(
-        pd.read_csv(DEP_FILE, encoding="utf-8-sig")
+        pd.read_csv(
+            DEP_FILE,
+            sep=None,
+            engine="python",
+            encoding="utf-8-sig",
+            on_bad_lines="skip",
+        )
     )
+
     df_bud = normalize_budget(
-        pd.read_csv(BUD_FILE, encoding="utf-8-sig")
+        pd.read_csv(
+            BUD_FILE,
+            sep=None,
+            engine="python",
+            encoding="utf-8-sig",
+            on_bad_lines="skip",
+        )
     )
 
     return df_dep, df_bud
@@ -91,7 +104,7 @@ def load_data():
 df_dep, df_bud = load_data()
 
 # ======================================================
-# SIDEBAR — ACTIONS DONNÉES
+# SIDEBAR — CONTRÔLE DONNÉES
 # ======================================================
 with st.sidebar:
     st.markdown("## 📂 Données")
@@ -101,7 +114,7 @@ with st.sidebar:
         st.experimental_rerun()
 
     if df_dep is None or df_bud is None:
-        st.error("Fichiers CSV manquants dans le dossier /data")
+        st.error("Fichiers CSV manquants ou illisibles dans le dossier /data")
         st.stop()
 
 # ======================================================
