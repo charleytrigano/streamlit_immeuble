@@ -27,7 +27,6 @@ def facture_status(row):
     if raw_id == "" or raw_id.lower() == "nan":
         return "❌ À justifier", None
 
-    # Normalisation forte du piece_id
     pid = (
         raw_id
         .replace("\u00a0", " ")
@@ -35,7 +34,6 @@ def facture_status(row):
     )
     pid = " ".join(pid.split())
 
-    # Préfixe année si absent
     if not pid.startswith(str(row["annee"])):
         pid = f"{row['annee']} - {pid}"
 
@@ -43,8 +41,7 @@ def facture_status(row):
 
     if os.path.exists(path):
         return "✅ OK", path
-    else:
-        return "⚠️ PDF manquant", None
+    return "⚠️ PDF manquant", None
 
 
 # ======================================================
@@ -86,7 +83,6 @@ def normalize_budget(df):
     df["budget"] = df["budget"].astype(float)
     df["compte"] = df["compte"].astype(str)
 
-    # Groupes de comptes : 621/622 sur 4 chiffres, sinon 3
     df["compte"] = df["compte"].apply(
         lambda x: x[:4] if x.startswith(("621", "622")) else x[:3]
     )
@@ -108,37 +104,16 @@ if "df_bud" not in st.session_state:
 with st.sidebar:
     st.markdown("## 📂 Chargement des données")
 
-    dep_csv = st.file_uploader(
-        "Dépenses (CSV)",
-        type="csv",
-        key="upload_depenses"
-    )
-
-    bud_csv = st.file_uploader(
-        "Budget (CSV)",
-        type="csv",
-        key="upload_budget"
-    )
+    dep_csv = st.file_uploader("Dépenses (CSV)", type="csv", key="upload_dep")
+    bud_csv = st.file_uploader("Budget (CSV)", type="csv", key="upload_bud")
 
     if dep_csv is not None:
-        df = pd.read_csv(
-            dep_csv,
-            sep=None,
-            engine="python",
-            on_bad_lines="skip",
-            encoding="utf-8-sig"
-        )
+        df = pd.read_csv(dep_csv, sep=None, engine="python", on_bad_lines="skip", encoding="utf-8-sig")
         st.session_state.df_dep = normalize_depenses(df)
         st.success("Dépenses chargées")
 
     if bud_csv is not None:
-        df = pd.read_csv(
-            bud_csv,
-            sep=None,
-            engine="python",
-            on_bad_lines="skip",
-            encoding="utf-8-sig"
-        )
+        df = pd.read_csv(bud_csv, sep=None, engine="python", on_bad_lines="skip", encoding="utf-8-sig")
         st.session_state.df_bud = normalize_budget(df)
         st.success("Budget chargé")
 
@@ -154,11 +129,10 @@ df_bud = st.session_state.df_bud
 # ======================================================
 # NAVIGATION
 # ======================================================
-with st.sidebar:
-    page = st.radio(
-        "Navigation",
-        ["📊 État des dépenses", "💰 Budget", "📊 Budget vs Réel"]
-    )
+page = st.sidebar.radio(
+    "Navigation",
+    ["📊 État des dépenses", "💰 Budget", "📊 Budget vs Réel"]
+)
 
 
 # ======================================================
@@ -184,35 +158,10 @@ if page == "📊 État des dépenses":
 
     st.dataframe(
         df_f[
-            [
-                "annee",
-                "compte",
-                "poste",
-                "fournisseur",
-                "montant_ttc",
-                "piece_id",
-                "statut_facture",
-            ]
+            ["annee", "compte", "poste", "fournisseur", "montant_ttc", "piece_id", "statut_facture"]
         ],
         use_container_width=True,
     )
-
-st.markdown("### 📄 Facture associée")
-
-if "pdf_url" in df_edit.columns:
-    pdfs = df_edit["pdf_url"].dropna().unique()
-
-    if len(pdfs) > 0:
-        pdf_sel = st.selectbox("Choisir une facture", pdfs)
-        st.markdown(
-            f"[📄 Ouvrir la facture]({pdf_sel})",
-            unsafe_allow_html=True
-        )
-    else:
-        st.info("Aucune facture PDF renseignée pour cette sélection.")
-else:
-    st.warning("Colonne 'pdf_url' absente du CSV.")
-
 
 
 # ======================================================
@@ -223,30 +172,12 @@ if page == "💰 Budget":
     annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()))
     df_b = df_bud[df_bud["annee"] == annee].copy()
 
-    st.metric(
-        "Budget total (€)",
-        f"{df_b['budget'].sum():,.0f}".replace(",", " ")
-    )
+    st.metric("Budget total (€)", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
 
-    st.markdown("### ✏️ Ajouter / Modifier / Supprimer le budget")
-    df_edit = st.data_editor(
-        df_b,
-        num_rows="dynamic",
-        use_container_width=True
-    )
+    df_edit = st.data_editor(df_b, num_rows="dynamic", use_container_width=True)
 
     df_other = df_bud[df_bud["annee"] != annee]
-    st.session_state.df_bud = pd.concat(
-        [df_other, df_edit],
-        ignore_index=True
-    )
-
-    st.download_button(
-        "📥 Télécharger le budget",
-        st.session_state.df_bud.to_csv(index=False).encode("utf-8"),
-        file_name="budget_comptes_generaux.csv",
-        mime="text/csv",
-    )
+    st.session_state.df_bud = pd.concat([df_other, df_edit], ignore_index=True)
 
 
 # ======================================================
@@ -281,7 +212,4 @@ if page == "📊 Budget vs Réel":
     comp["ecart_eur"] = comp["depenses_nettes"] - comp["budget"]
     comp["ecart_pct"] = comp["ecart_eur"] / comp["budget"] * 100
 
-    st.dataframe(
-        comp.reset_index(),
-        use_container_width=True,
-    )
+    st.dataframe(comp.reset_index(), use_container_width=True)
