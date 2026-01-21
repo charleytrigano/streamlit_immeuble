@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import unicodedata
-import os
 
 # ======================================================
 # CONFIG
@@ -44,7 +43,7 @@ def load_budget():
     return df
 
 
-def google_preview(url):
+def google_link(url):
     if isinstance(url, str) and "/preview" in url:
         return url
     return None
@@ -100,20 +99,32 @@ if page == "📊 État des dépenses":
     c2.metric("Avoirs (€)", f"{avoirs:,.0f}".replace(",", " "))
     c3.metric("Dépenses nettes (€)", f"{net:,.0f}".replace(",", " "))
 
-    def link_or_dash(url):
-        url = google_preview(url)
-        return f"[📄 Ouvrir]({url})" if url else "—"
+    def facture_cell(url):
+        link = google_link(url)
+        return "📄 Ouvrir" if link else "—"
 
-    df_f["Facture"] = df_f["pdf_url"].apply(link_or_dash)
+    df_f["Facture"] = df_f["pdf_url"].apply(facture_cell)
 
     st.markdown("### 📋 Détail des dépenses")
-    st.markdown(
+    st.dataframe(
         df_f[
             ["compte", "poste", "fournisseur", "montant_ttc", "Facture"]
-        ].to_markdown(index=False),
-        unsafe_allow_html=True
+        ],
+        use_container_width=True
     )
 
+    # Bouton facture
+    lignes_avec_facture = df_f[df_f["pdf_url"].apply(lambda x: google_link(x) is not None)]
+    if not lignes_avec_facture.empty:
+        idx = st.selectbox(
+            "Ouvrir une facture",
+            lignes_avec_facture.index,
+            format_func=lambda i: f"{lignes_avec_facture.loc[i,'poste']} – {lignes_avec_facture.loc[i,'montant_ttc']} €"
+        )
+        st.link_button(
+            "📄 Ouvrir la facture",
+            lignes_avec_facture.loc[idx, "pdf_url"]
+        )
 
 # ======================================================
 # 💰 BUDGET
@@ -124,7 +135,6 @@ if page == "💰 Budget":
     annee = st.selectbox("Année budgétaire", annees)
 
     df_a = df_bud[df_bud["annee"] == annee].copy()
-
     st.metric("Budget total (€)", f"{df_a['budget'].sum():,.0f}".replace(",", " "))
 
     st.markdown("### ✏️ Modifier le budget")
@@ -144,19 +154,12 @@ if page == "💰 Budget":
         mime="text/csv"
     )
 
-    st.markdown("---")
     st.markdown("### ➕ Créer un nouveau budget")
-
     col1, col2 = st.columns(2)
     with col1:
         annee_source = st.selectbox("Année source", annees)
     with col2:
-        annee_cible = st.number_input(
-            "Nouvelle année",
-            min_value=2000,
-            max_value=2100,
-            step=1
-        )
+        annee_cible = st.number_input("Nouvelle année", min_value=2000, max_value=2100, step=1)
 
     if st.button("📄 Créer le nouveau budget"):
         if annee_cible in annees:
@@ -197,7 +200,7 @@ if page == "📊 Budget vs Réel":
     ).fillna(0)
 
     comp["ecart_eur"] = comp["reel"] - comp["budget"]
-    comp["ecart_pct"] = comp["ecart_eur"] / comp["budget"] * 100
+    comp["ecart_pct"] = (comp["ecart_eur"] / comp["budget"] * 100).round(1)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Budget (€)", f"{comp['budget'].sum():,.0f}".replace(",", " "))
