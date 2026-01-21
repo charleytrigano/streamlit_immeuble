@@ -63,38 +63,24 @@ def normalize_budget(df):
 
 
 # ======================================================
-# CHARGEMENT OFFICIEL
+# CHARGEMENT
 # ======================================================
 @st.cache_data(show_spinner=False)
-def load_official_data():
+def load_data():
     dep = normalize_depenses(pd.read_csv(DEP_FILE, encoding="utf-8-sig"))
     bud = normalize_budget(pd.read_csv(BUD_FILE, encoding="utf-8-sig"))
     return dep, bud
 
 
-df_dep, df_bud = load_official_data()
+df_dep, df_bud = load_data()
 
 # ======================================================
-# SIDEBAR — RESTAURATION
+# SIDEBAR
 # ======================================================
 with st.sidebar:
-    st.markdown("## 🔄 Données")
-
-    if st.button("Recharger depuis GitHub"):
+    if st.button("🔄 Recharger les données"):
         st.cache_data.clear()
         st.rerun()
-
-    st.markdown("### Restaurer depuis XLSX")
-    xlsx = st.file_uploader("immeuble_data.xlsx", type="xlsx")
-
-    if xlsx:
-        xls = pd.ExcelFile(xlsx)
-        if "depenses" in xls.sheet_names and "budget" in xls.sheet_names:
-            df_dep = normalize_depenses(pd.read_excel(xls, "depenses"))
-            df_bud = normalize_budget(pd.read_excel(xls, "budget"))
-            st.success("XLSX chargé en mémoire (export CSV requis)")
-        else:
-            st.error("Onglets requis manquants")
 
     page = st.radio(
         "Navigation",
@@ -102,7 +88,7 @@ with st.sidebar:
     )
 
 # ======================================================
-# 📊 BUDGET VS RÉEL (ANALYSE AUTOMATIQUE)
+# 📊 BUDGET VS RÉEL
 # ======================================================
 if page == "📊 Budget vs Réel":
 
@@ -114,31 +100,73 @@ if page == "📊 Budget vs Réel":
     reel = dep.groupby("groupe_compte")["montant_ttc"].sum().reset_index()
     comp = bud.merge(reel, on="groupe_compte", how="left").fillna(0)
 
-    comp["écart (€)"] = comp["montant_ttc"] - comp["budget"]
-    comp["écart (%)"] = (comp["écart (€)"] / comp["budget"] * 100).round(1)
-    comp["statut"] = comp["écart (€)"].apply(lambda x: "DÉPASSEMENT" if x > 0 else "OK")
+    comp["Écart (€)"] = comp["montant_ttc"] - comp["budget"]
+    comp["Écart (%)"] = (comp["Écart (€)"] / comp["budget"] * 100).round(1)
+    comp["Statut"] = comp["Écart (€)"].apply(lambda x: "DÉPASSEMENT" if x > 0 else "OK")
 
-    st.dataframe(comp, use_container_width=True)
+    # KPI
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Budget total (€)", f"{comp['budget'].sum():,.0f}".replace(",", " "))
+    k2.metric("Réel net (€)", f"{comp['montant_ttc'].sum():,.0f}".replace(",", " "))
+    k3.metric("Écart total (€)", f"{comp['Écart (€)'].sum():,.0f}".replace(",", " "))
+    k4.metric("Écart moyen (%)", f"{comp['Écart (%)'].mean():.1f} %")
+    k5.metric(
+        "Comptes en dépassement",
+        int((comp["Écart (€)"] > 0).sum())
+    )
 
-    st.download_button(
-        "Télécharger budget_comptes_generaux.csv",
-        bud.to_csv(index=False).encode("utf-8"),
-        file_name="budget_comptes_generaux.csv"
+    st.dataframe(
+        comp[
+            ["groupe_compte", "budget", "montant_ttc", "Écart (€)", "Écart (%)", "Statut"]
+        ],
+        use_container_width=True
     )
 
 # ======================================================
-# 🔍 DRILL-DOWN — ÉCRITURES & FACTURES
+# 🔍 ANALYSE DÉTAILLÉE (DRILL-DOWN)
 # ======================================================
 if page == "🔍 Analyse détaillée":
 
-    annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
-    groupes = sorted(df_dep["groupe_compte"].unique())
-    grp = st.selectbox("Groupe de compte", groupes)
+    st.markdown("### 🔎 Filtres")
 
-    df_f = df_dep[
-        (df_dep["annee"] == annee) &
-        (df_dep["groupe_compte"] == grp)
-    ].copy()
+    f1, f2, f3, f4 = st.columns(4)
+
+    with f1:
+        annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
+
+    with f2:
+        groupes = ["Tous"] + sorted(df_dep["groupe_compte"].unique())
+        grp = st.selectbox("Groupe de comptes", groupes)
+
+    df_f = df_dep[df_dep["annee"] == annee]
+
+    if grp != "Tous":
+        df_f = df_f[df_f["groupe_compte"] == grp]
+
+    with f3:
+        comptes = ["Tous"] + sorted(df_f["compte"].unique())
+        cpt = st.selectbox("Compte", comptes)
+
+    if cpt != "Tous":
+        df_f = df_f[df_f["compte"] == cpt]
+
+    with f4:
+        fournisseurs = ["Tous"] + sorted(df_f["fournisseur"].unique())
+        four = st.selectbox("Fournisseur", fournisseurs)
+
+    if four != "Tous":
+        df_f = df_f[df_f["fournisseur"] == four]
+
+    # KPI filtrés
+    dep_pos = df_f[df_f["montant_ttc"] > 0]["montant_ttc"].sum()
+    dep_neg = df_f[df_f["montant_ttc"] < 0]["montant_ttc"].sum()
+    net = dep_pos + dep_neg
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Dépenses brutes (€)", f"{dep_pos:,.0f}".replace(",", " "))
+    k2.metric("Avoirs (€)", f"{dep_neg:,.0f}".replace(",", " "))
+    k3.metric("Dépenses nettes (€)", f"{net:,.0f}".replace(",", " "))
+    k4.metric("Nombre de lignes", len(df_f))
 
     df_f["Facture"] = df_f.apply(facture_cell, axis=1)
 
@@ -147,15 +175,4 @@ if page == "🔍 Analyse détaillée":
             ["compte", "poste", "fournisseur", "montant_ttc", "Facture"]
         ].to_html(escape=False, index=False),
         unsafe_allow_html=True
-    )
-
-    st.download_button(
-        "Télécharger base_depenses_immeuble.csv",
-        df_f.to_csv(index=False).encode("utf-8"),
-        file_name="base_depenses_immeuble.csv"
-    )
-
-    st.info(
-        "Les restaurations et modifications sont temporaires.\n"
-        "➡️ Télécharge les CSV et commit-les dans GitHub pour les rendre officielles."
     )
