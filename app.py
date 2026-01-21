@@ -1,171 +1,261 @@
 import streamlit as st
 import pandas as pd
+import unicodedata
 from pathlib import Path
 
-# Configuration de base
-st.set_page_config(page_title="Gestion des Charges", layout="wide")
-st.title("🏠 Gestion des Charges de l'Immeuble")
+# ======================================================
+# CONFIG
+# ======================================================
+st.set_page_config(page_title="Pilotage des charges", layout="wide")
+st.title("Pilotage des charges de l’immeuble")
 
-# Chemins des fichiers
 DATA_DIR = Path("data")
-DEP_FILE = DATA_DIR / "depenses.csv"
-BUD_FILE = DATA_DIR / "budget.csv"
+DEP_FILE = DATA_DIR / "base_depenses_immeuble.csv"
+BUD_FILE = DATA_DIR / "budget_comptes_generaux.csv"
 
-# Créer le dossier et les fichiers s'ils n'existent pas
-def init_files():
-    DATA_DIR.mkdir(exist_ok=True, parents=True)
-    if not DEP_FILE.exists():
-        pd.DataFrame(columns=["annee", "compte", "poste", "montant_ttc"]).to_csv(DEP_FILE, index=False)
-    if not BUD_FILE.exists():
-        pd.DataFrame(columns=["annee", "compte", "budget"]).to_csv(BUD_FILE, index=False)
+# ======================================================
+# OUTILS
+# ======================================================
+def clean_columns(df):
+    def norm(c):
+        c = str(c).strip().lower()
+        c = unicodedata.normalize("NFKD", c).encode("ascii", "ignore").decode()
+        return c.replace(" ", "_").replace("-", "_")
+    df.columns = [norm(c) for c in df.columns]
+    return df
 
-init_files()
 
-# Charger les données
-@st.cache_data
+def compute_groupe_compte(compte):
+    compte = str(compte)
+    return compte[:4] if compte.startswith(("621", "622")) else compte[:3]
+
+
+def make_facture_cell(row):
+    pid = row.get("piece_id", "")
+    url = row.get("pdf_url", "")
+    if isinstance(url, str) and url.strip():
+        return f'{pid} – <a href="{url}" target="_blank">📄 Ouvrir</a>'
+    return pid if pid else "—"
+
+
+# ======================================================
+# NORMALISATION
+# ======================================================
+def normalize_depenses(df):
+    df = clean_columns(df)
+
+    for col in ["poste", "fournisseur", "piece_id", "pdf_url"]:
+        if col not in df.columns:
+            df[col] = ""
+
+    required = {"annee", "compte", "montant_ttc"}
+    if not required.issubset(df.columns):
+        st.error(f"Colonnes manquantes dans les dépenses : {required - set(df.columns)}")
+        st.stop()
+
+    df["annee"] = df["annee"].astype(int)
+    df["compte"] = df["compte"].astype(str)
+    df["montant_ttc"] = df["montant_ttc"].astype(float)
+    df["piece_id"] = df["piece_id"].astype(str).str.strip()
+    df["pdf_url"] = df["pdf_url"].astype(str).str.strip()
+    df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
+
+    df["statut_facture"] = df["pdf_url"].apply(
+        lambda x: "Justifiée" if x else "À justifier"
+    )
+
+    return df
+
+
+def normalize_budget(df):
+    df = clean_columns(df)
+
+    required = {"annee", "compte", "budget"}
+    if not required.issubset(df.columns):
+        st.error(f"Colonnes manquantes dans le budget : {required - set(df.columns)}")
+        st.stop()
+
+    df["annee"] = df["annee"].astype(int)
+    df["compte"] = df["compte"].astype(str)
+    df["budget"] = df["budget"].astype(float)
+    df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
+
+    return df
+
+
+# ======================================================
+# CHARGEMENT DES DONNÉES
+# ======================================================
+@st.cache_data(show_spinner=False)
 def load_data():
-    try:
-        df_dep = pd.read_csv(DEP_FILE)
-        if df_dep.empty:
-            df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "montant_ttc"])
-    except Exception as e:
-        st.error(f"Erreur chargement dépenses: {e}")
-        df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "montant_ttc"])
+    df_dep = normalize_depenses(
+        pd.read_csv(
+            DEP_FILE,
+            sep=None,
+            engine="python",
+            encoding="utf-8-sig",
+            on_bad_lines="skip",
+        )
+    )
 
-    try:
-        df_bud = pd.read_csv(BUD_FILE)
-        if df_bud.empty:
-            df_bud = pd.DataFrame(columns=["annee", "compte", "budget"])
-    except Exception as e:
-        st.error(f"Erreur chargement budget: {e}")
-        df_bud = pd.DataFrame(columns=["annee", "compte", "budget"])
+    df_bud = normalize_budget(
+        pd.read_csv(
+            BUD_FILE,
+            sep=None,
+            engine="python",
+            encoding="utf-8-sig",
+            on_bad_lines="skip",
+        )
+    )
 
     return df_dep, df_bud
 
-# Sauvegarder les données
-def save_data(df_dep, df_bud):
-    try:
-        df_dep.to_csv(DEP_FILE, index=False)
-        df_bud.to_csv(BUD_FILE, index=False)
-        st.success("✅ Données sauvegardées avec succès !")
-    except Exception as e:
-        st.error(f"❌ Erreur sauvegarde: {e}")
 
-# Charger les données
 df_dep, df_bud = load_data()
 
-# Interface
+# ======================================================
+# SIDEBAR
+# ======================================================
 with st.sidebar:
-    st.markdown("### 📁 Actions")
-    if st.button("🔄 Recharger"):
+    st.markdown("## 📂 Données")
+
+    if st.button("🔄 Recharger les données"):
         st.cache_data.clear()
         st.rerun()
 
-    if st.button("💾 Sauvegarder"):
-        save_data(df_dep, df_bud)  # Sauvegarde uniquement quand l'utilisateur clique
-
-    page = st.radio("Navigation", ["📊 Dépenses", "💰 Budget"])
-
-# Page Dépenses
-if page == "📊 Dépenses":
-    st.header("📋 Gestion des Dépenses")
-
-    # Filtres
-    annees = [2025] if df_dep.empty else sorted(df_dep["annee"].unique())
-    annee = st.selectbox("Année", annees)
-
-    df_filtered = df_dep[df_dep["annee"] == annee] if not df_dep.empty else df_dep
-
-    # Éditeur de données
-    st.subheader("Liste des dépenses")
-    edited_df = st.data_editor(
-        df_filtered,
-        num_rows="dynamic",
-        key="depenses_editor"
+    page = st.radio(
+        "Navigation",
+        ["📊 État des dépenses", "💰 Budget", "📊 Budget vs Réel"]
     )
 
-    # Appliquer les modifications
-    if not edited_df.equals(df_filtered):
-        df_dep.update(edited_df)
-        st.warning("⚠️ Modifications appliquées. Sauvegardez pour enregistrer.")
+# ======================================================
+# 📊 ÉTAT DES DÉPENSES
+# ======================================================
+if page == "📊 État des dépenses":
 
-    # Ajouter une dépense
-    st.subheader("➕ Ajouter une dépense")
-    with st.form("add_depense"):
-        new_annee = st.number_input("Année", value=2025)
-        new_compte = st.text_input("Compte")
-        new_poste = st.text_input("Poste")
-        new_montant = st.number_input("Montant TTC", value=0.0)
+    st.markdown("### 🔎 Filtres")
 
-        if st.form_submit_button("Ajouter"):
-            new_row = pd.DataFrame([{
-                "annee": new_annee,
-                "compte": new_compte,
-                "poste": new_poste,
-                "montant_ttc": new_montant
-            }])
-            df_dep = pd.concat([df_dep, new_row], ignore_index=True)
-            st.warning("⚠️ Dépense ajoutée. Sauvegardez pour enregistrer.")
-
-    # Supprimer des dépenses
-    st.subheader("❌ Supprimer des dépenses")
-    if not df_filtered.empty:
-        rows_to_delete = st.multiselect(
-            "Lignes à supprimer",
-            options=df_filtered.index,
-            format_func=lambda x: f"Ligne {x}"
+    f1, f2, f3, f4 = st.columns(4)
+    with f1:
+        annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
+    with f2:
+        groupe = st.selectbox(
+            "Groupe de comptes",
+            ["Tous"] + sorted(df_dep["groupe_compte"].unique())
         )
-        if st.button("Supprimer"):
-            df_dep = df_dep.drop(rows_to_delete)
-            st.warning("⚠️ Dépenses supprimées. Sauvegardez pour enregistrer.")
+    with f3:
+        fournisseur = st.selectbox(
+            "Fournisseur",
+            ["Tous"] + sorted(df_dep["fournisseur"].unique())
+        )
+    with f4:
+        statut = st.selectbox(
+            "Statut facture",
+            ["Tous", "Justifiée", "À justifier"]
+        )
 
-# Page Budget
+    df_f = df_dep[df_dep["annee"] == annee].copy()
+    if groupe != "Tous":
+        df_f = df_f[df_f["groupe_compte"] == groupe]
+    if fournisseur != "Tous":
+        df_f = df_f[df_f["fournisseur"] == fournisseur]
+    if statut != "Tous":
+        df_f = df_f[df_f["statut_facture"] == statut]
+
+    # KPI
+    dep_pos = df_f[df_f["montant_ttc"] > 0]["montant_ttc"].sum()
+    dep_neg = df_f[df_f["montant_ttc"] < 0]["montant_ttc"].sum()
+    net = dep_pos + dep_neg
+    pct_ok = (df_f["statut_facture"] == "Justifiée").mean() * 100 if len(df_f) else 0
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Dépenses brutes (€)", f"{dep_pos:,.0f}".replace(",", " "))
+    k2.metric("Avoirs (€)", f"{dep_neg:,.0f}".replace(",", " "))
+    k3.metric("Dépenses nettes (€)", f"{net:,.0f}".replace(",", " "))
+    k4.metric("% justifiées", f"{pct_ok:.0f} %")
+
+    # Édition
+    st.markdown("### ✏️ Modifier les dépenses")
+    df_edit = st.data_editor(
+        df_f,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="edit_dep"
+    )
+
+    df_edit["Facture"] = df_edit.apply(make_facture_cell, axis=1)
+    df_edit["Montant (€)"] = df_edit["montant_ttc"].map(
+        lambda x: f"{x:,.2f}".replace(",", " ")
+    )
+
+    st.markdown(
+        df_edit[
+            ["compte", "poste", "fournisseur", "Montant (€)", "statut_facture", "Facture"]
+        ].to_html(escape=False, index=False),
+        unsafe_allow_html=True
+    )
+
+    st.download_button(
+        "💾 Télécharger base_depenses_immeuble.csv",
+        df_edit.to_csv(index=False).encode("utf-8"),
+        file_name="base_depenses_immeuble.csv",
+        mime="text/csv",
+    )
+
+    st.info(
+        "Les modifications sont locales à la session.\n"
+        "➡️ Télécharge le CSV et commit-le dans GitHub pour les conserver."
+    )
+
+# ======================================================
+# 💰 BUDGET
+# ======================================================
 if page == "💰 Budget":
-    st.header("💰 Gestion du Budget")
 
-    # Filtres
-    annees_bud = [2025] if df_bud.empty else sorted(df_bud["annee"].unique())
-    annee_bud = st.selectbox("Année", annees_bud)
+    annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()))
+    df_b = df_bud[df_bud["annee"] == annee].copy()
 
-    df_bud_filtered = df_bud[df_bud["annee"] == annee_bud] if not df_bud.empty else df_bud
+    st.metric("Budget total (€)", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
 
-    # Éditeur de données
-    st.subheader("Budget")
-    edited_bud = st.data_editor(
-        df_bud_filtered,
+    st.markdown("### ✏️ Modifier le budget")
+    df_edit = st.data_editor(
+        df_b,
         num_rows="dynamic",
-        key="budget_editor"
+        use_container_width=True,
+        key="edit_budget"
     )
 
-    # Appliquer les modifications
-    if not edited_bud.equals(df_bud_filtered):
-        df_bud.update(edited_bud)
-        st.warning("⚠️ Modifications appliquées. Sauvegardez pour enregistrer.")
+    st.download_button(
+        "💾 Télécharger budget_comptes_generaux.csv",
+        df_edit.to_csv(index=False).encode("utf-8"),
+        file_name="budget_comptes_generaux.csv",
+        mime="text/csv",
+    )
 
-    # Ajouter une ligne de budget
-    st.subheader("➕ Ajouter une ligne de budget")
-    with st.form("add_budget"):
-        new_annee_bud = st.number_input("Année", value=2025)
-        new_compte_bud = st.text_input("Compte")
-        new_budget = st.number_input("Budget", value=0.0)
+# ======================================================
+# 📊 BUDGET VS RÉEL
+# ======================================================
+if page == "📊 Budget vs Réel":
 
-        if st.form_submit_button("Ajouter"):
-            new_row_bud = pd.DataFrame([{
-                "annee": new_annee_bud,
-                "compte": new_compte_bud,
-                "budget": new_budget
-            }])
-            df_bud = pd.concat([df_bud, new_row_bud], ignore_index=True)
-            st.warning("⚠️ Ligne de budget ajoutée. Sauvegardez pour enregistrer.")
+    annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
 
-    # Supprimer des lignes de budget
-    st.subheader("❌ Supprimer des lignes de budget")
-    if not df_bud_filtered.empty:
-        rows_to_delete_bud = st.multiselect(
-            "Lignes à supprimer",
-            options=df_bud_filtered.index,
-            format_func=lambda x: f"Ligne {x}"
-        )
-        if st.button("Supprimer"):
-            df_bud = df_bud.drop(rows_to_delete_bud)
-            st.warning("⚠️ Lignes de budget supprimées. Sauvegardez pour enregistrer.")
+    dep = df_dep[df_dep["annee"] == annee]
+    bud = df_bud[df_bud["annee"] == annee]
+
+    reel = dep.groupby("groupe_compte")["montant_ttc"].sum().reset_index()
+    comp = bud.merge(reel, on="groupe_compte", how="left").fillna(0)
+
+    comp["Écart (€)"] = comp["montant_ttc"] - comp["budget"]
+    comp["Écart (%)"] = (comp["Écart (€)"] / comp["budget"] * 100).round(1)
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Budget (€)", f"{comp['budget'].sum():,.0f}".replace(",", " "))
+    k2.metric("Réel (€)", f"{comp['montant_ttc'].sum():,.0f}".replace(",", " "))
+    k3.metric("Écart total (€)", f"{comp['Écart (€)'].sum():,.0f}".replace(",", " "))
+
+    st.dataframe(
+        comp[
+            ["groupe_compte", "budget", "montant_ttc", "Écart (€)", "Écart (%)"]
+        ],
+        use_container_width=True
+    )
