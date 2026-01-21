@@ -3,7 +3,9 @@ import pandas as pd
 from pathlib import Path
 import os
 
-# Configuration de base
+# ======================================================
+# CONFIGURATION DE BASE
+# ======================================================
 st.set_page_config(page_title="Gestion des Charges", layout="wide")
 st.title("🏠 Gestion des Charges de l'Immeuble")
 
@@ -13,27 +15,27 @@ DEP_FILE = DATA_DIR / "depenses.csv"
 BUD_FILE = DATA_DIR / "budget.csv"
 
 # Créer le dossier et les fichiers s'ils n'existent pas
-DATA_DIR.mkdir(exist_ok=True)
-
-# Initialiser les fichiers CSV avec des colonnes de base
 def init_files():
+    DATA_DIR.mkdir(exist_ok=True, parents=True)
     if not DEP_FILE.exists():
-        pd.DataFrame(columns=["annee", "compte", "poste", "montant"]).to_csv(DEP_FILE, index=False)
+        pd.DataFrame(columns=["annee", "compte", "poste", "montant_ttc"]).to_csv(DEP_FILE, index=False)
     if not BUD_FILE.exists():
         pd.DataFrame(columns=["annee", "compte", "budget"]).to_csv(BUD_FILE, index=False)
 
 init_files()
 
-# Charger les données avec gestion d'erreur
+# ======================================================
+# CHARGEMENT ET SAUVEGARDE DES DONNÉES
+# ======================================================
 @st.cache_data
 def load_data():
     try:
         df_dep = pd.read_csv(DEP_FILE)
         if df_dep.empty:
-            df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "montant"])
+            df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "montant_ttc"])
     except Exception as e:
         st.error(f"Erreur chargement dépenses: {e}")
-        df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "montant"])
+        df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "montant_ttc"])
 
     try:
         df_bud = pd.read_csv(BUD_FILE)
@@ -45,7 +47,6 @@ def load_data():
 
     return df_dep, df_bud
 
-# Sauvegarder les données avec gestion d'erreur
 def save_data(df_dep, df_bud):
     try:
         df_dep.to_csv(DEP_FILE, index=False)
@@ -57,7 +58,9 @@ def save_data(df_dep, df_bud):
 # Charger les données
 df_dep, df_bud = load_data()
 
-# Sidebar
+# ======================================================
+# INTERFACE UTILISATEUR
+# ======================================================
 with st.sidebar:
     st.markdown("### 📁 Actions")
     if st.button("🔄 Recharger"):
@@ -67,11 +70,12 @@ with st.sidebar:
     if st.button("💾 Sauvegarder"):
         save_data(df_dep, df_bud)
 
-    st.markdown("### 📊 Navigation")
-    page = st.radio("", ["Dépenses", "Budget"])
+    page = st.radio("Navigation", ["📊 Dépenses", "💰 Budget"])
 
-# Page Dépenses
-if page == "Dépenses":
+# ======================================================
+# PAGE DÉPENSES
+# ======================================================
+if page == "📊 Dépenses":
     st.header("📋 Gestion des Dépenses")
 
     # Filtres
@@ -99,14 +103,14 @@ if page == "Dépenses":
         new_annee = st.number_input("Année", value=2025)
         new_compte = st.text_input("Compte")
         new_poste = st.text_input("Poste")
-        new_montant = st.number_input("Montant", value=0.0)
+        new_montant = st.number_input("Montant TTC", value=0.0)
 
         if st.form_submit_button("Ajouter"):
             new_row = pd.DataFrame([{
                 "annee": new_annee,
                 "compte": new_compte,
                 "poste": new_poste,
-                "montant": new_montant
+                "montant_ttc": new_montant
             }])
             df_dep = pd.concat([df_dep, new_row], ignore_index=True)
             st.warning("⚠️ Dépense ajoutée. Sauvegardez pour enregistrer.")
@@ -123,8 +127,10 @@ if page == "Dépenses":
             df_dep = df_dep.drop(rows_to_delete)
             st.warning("⚠️ Dépenses supprimées. Sauvegardez pour enregistrer.")
 
-# Page Budget
-if page == "Budget":
+# ======================================================
+# PAGE BUDGET
+# ======================================================
+if page == "💰 Budget":
     st.header("💰 Gestion du Budget")
 
     # Filtres
