@@ -12,7 +12,7 @@ def load_budgets(supabase, annee: int) -> pd.DataFrame:
     return pd.DataFrame(res.data)
 
 
-def save_budgets(supabase, df: pd.DataFrame):
+def save_budgets(supabase, df):
     records = df.to_dict(orient="records")
     (
         supabase
