@@ -7,6 +7,14 @@ from utils.supabase_client import get_supabase
 
 supabase = get_supabase()
 
+res = supabase.table("budgets").select("*").limit(5).execute()
+st.write("Budgets:", res.data)
+
+st.stop()
+from utils.supabase_client import get_supabase
+
+supabase = get_supabase()
+
 test = supabase.table("budgets").select("*").limit(1).execute()
 st.write("Connexion Supabase OK", test.data)
 
