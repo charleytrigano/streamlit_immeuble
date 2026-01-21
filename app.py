@@ -40,6 +40,30 @@ def make_facture_cell(row):
     return pid if pid else "—"
 
 # ======================================================
+# CHARGEMENT ET SAUVEGARDE DES DONNÉES
+# ======================================================
+@st.cache_data(show_spinner=False)
+def load_data():
+    try:
+        df_dep = pd.read_csv(DEP_FILE, sep=None, engine="python", encoding="utf-8-sig", on_bad_lines="skip")
+        df_dep = normalize_depenses(df_dep)
+    except FileNotFoundError:
+        df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "fournisseur", "montant_ttc", "piece_id", "pdf_url", "groupe_compte", "statut_facture"])
+
+    try:
+        df_bud = pd.read_csv(BUD_FILE, sep=None, engine="python", encoding="utf-8-sig", on_bad_lines="skip")
+        df_bud = normalize_budget(df_bud)
+    except FileNotFoundError:
+        df_bud = pd.DataFrame(columns=["annee", "compte", "budget", "groupe_compte"])
+
+    return df_dep, df_bud
+
+def save_data(df_dep, df_bud):
+    df_dep.to_csv(DEP_FILE, index=False)
+    df_bud.to_csv(BUD_FILE, index=False)
+    st.success("Données sauvegardées avec succès !")
+
+# ======================================================
 # NORMALISATION
 # ======================================================
 def normalize_depenses(df):
@@ -81,44 +105,6 @@ def normalize_budget(df):
     df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
 
     return df
-
-# ======================================================
-# CHARGEMENT ET SAUVEGARDE DES DONNÉES
-# ======================================================
-@st.cache_data(show_spinner=False)
-def load_data():
-    try:
-        df_dep = normalize_depenses(
-            pd.read_csv(
-                DEP_FILE,
-                sep=None,
-                engine="python",
-                encoding="utf-8-sig",
-                on_bad_lines="skip",
-            )
-        )
-    except FileNotFoundError:
-        df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "fournisseur", "montant_ttc", "piece_id", "pdf_url"])
-
-    try:
-        df_bud = normalize_budget(
-            pd.read_csv(
-                BUD_FILE,
-                sep=None,
-                engine="python",
-                encoding="utf-8-sig",
-                on_bad_lines="skip",
-            )
-        )
-    except FileNotFoundError:
-        df_bud = pd.DataFrame(columns=["annee", "compte", "budget"])
-
-    return df_dep, df_bud
-
-def save_data(df_dep, df_bud):
-    df_dep.to_csv(DEP_FILE, index=False)
-    df_bud.to_csv(BUD_FILE, index=False)
-    st.success("Données sauvegardées avec succès !")
 
 # ======================================================
 # SIDEBAR
@@ -194,6 +180,12 @@ if page == "📊 État des dépenses":
         key="edit_dep"
     )
 
+    # Appliquer les modifications au DataFrame principal
+    if not edited_df.equals(df_f):
+        df_dep.update(edited_df)
+        save_data(df_dep, df_bud)
+        st.rerun()
+
     # Ajouter une nouvelle dépense
     st.markdown("### ➕ Ajouter une dépense")
     with st.form("new_depense"):
@@ -213,7 +205,9 @@ if page == "📊 État des dépenses":
                 "fournisseur": new_fournisseur,
                 "montant_ttc": new_montant,
                 "piece_id": new_piece_id,
-                "pdf_url": new_pdf_url
+                "pdf_url": new_pdf_url,
+                "groupe_compte": compute_groupe_compte(new_compte),
+                "statut_facture": "Justifiée" if new_pdf_url else "À justifier"
             }])
             df_dep = pd.concat([df_dep, new_row], ignore_index=True)
             save_data(df_dep, df_bud)
@@ -233,13 +227,13 @@ if page == "📊 État des dépenses":
             st.rerun()
 
     # Affichage
-    if not edited_df.empty:
-        edited_df["Facture"] = edited_df.apply(make_facture_cell, axis=1)
-        edited_df["Montant (€)"] = edited_df["montant_ttc"].map(
+    if not df_f.empty:
+        df_f["Facture"] = df_f.apply(make_facture_cell, axis=1)
+        df_f["Montant (€)"] = df_f["montant_ttc"].map(
             lambda x: f"{x:,.2f}".replace(",", " ")
         )
         st.markdown(
-            edited_df[
+            df_f[
                 ["compte", "poste", "fournisseur", "Montant (€)", "statut_facture", "Facture"]
             ].to_html(escape=False, index=False),
             unsafe_allow_html=True
@@ -271,6 +265,12 @@ if page == "💰 Budget":
         key="edit_budget"
     )
 
+    # Appliquer les modifications au DataFrame principal
+    if not edited_bud.equals(df_b):
+        df_bud.update(edited_bud)
+        save_data(df_dep, df_bud)
+        st.rerun()
+
     # Ajouter une nouvelle ligne de budget
     st.markdown("### ➕ Ajouter une ligne de budget")
     with st.form("new_budget"):
@@ -282,7 +282,8 @@ if page == "💰 Budget":
             new_row_bud = pd.DataFrame([{
                 "annee": new_annee_bud,
                 "compte": new_compte_bud,
-                "budget": new_budget
+                "budget": new_budget,
+                "groupe_compte": compute_groupe_compte(new_compte_bud)
             }])
             df_bud = pd.concat([df_bud, new_row_bud], ignore_index=True)
             save_data(df_dep, df_bud)
