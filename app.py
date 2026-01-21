@@ -4,6 +4,7 @@ import pandas as pd
 from utils.supabase_client import get_supabase
 from utils.budgets_repo import load_budgets, save_budgets
 from utils.depenses_repo import load_depenses
+from utils.budget_vs_reel_ui import budget_vs_reel_ui
 
 # ======================
 # CONFIG
@@ -25,6 +26,7 @@ page = st.sidebar.radio(
     [
         "📈 État des dépenses",
         "💰 Budget",
+        "📊 Budget vs Réel",
     ],
 )
 
@@ -46,7 +48,6 @@ if page == "📈 État des dépenses":
         st.info("Aucune dépense pour cette année.")
         st.stop()
 
-    # KPI
     col1, col2 = st.columns(2)
     col1.metric("Total dépenses (€)", f"{df['montant_ttc'].sum():,.2f}")
     col2.metric("Nombre de lignes", len(df))
@@ -104,3 +105,9 @@ elif page == "💰 Budget":
         save_budgets(supabase, edited_df)
         st.success("Budget enregistré avec succès")
         st.rerun()
+
+# ======================
+# PAGE : BUDGET VS RÉEL
+# ======================
+elif page == "📊 Budget vs Réel":
+    budget_vs_reel_ui(supabase)
