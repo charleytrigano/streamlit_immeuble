@@ -4,6 +4,10 @@ from pathlib import Path
 import unicodedata
 import os
 
+# Initialisation de l'état de session pour suivre les modifications
+if 'data_modified' not in st.session_state:
+    st.session_state.data_modified = False
+
 # ======================================================
 # CONFIG
 # ======================================================
@@ -62,6 +66,7 @@ def save_data(df_dep, df_bud):
     df_dep.to_csv(DEP_FILE, index=False)
     df_bud.to_csv(BUD_FILE, index=False)
     st.success("Données sauvegardées avec succès !")
+    st.session_state.data_modified = False
 
 # ======================================================
 # NORMALISATION
@@ -117,7 +122,10 @@ with st.sidebar:
         st.rerun()
 
     if st.button("💾 Sauvegarder les données"):
-        save_data(df_dep, df_bud)
+        if st.session_state.data_modified:
+            save_data(df_dep, df_bud)
+        else:
+            st.info("Aucune modification à sauvegarder.")
 
     page = st.radio(
         "Navigation",
@@ -185,6 +193,7 @@ if page == "📊 État des dépenses":
     # Appliquer les modifications au DataFrame principal
     if not edited_df.equals(df_f):
         df_dep.update(edited_df)
+        st.session_state.data_modified = True
         st.warning("Modifications appliquées. Pensez à sauvegarder !")
 
     # Ajouter une nouvelle dépense
@@ -211,6 +220,7 @@ if page == "📊 État des dépenses":
                 "statut_facture": "Justifiée" if new_pdf_url else "À justifier"
             }])
             df_dep = pd.concat([df_dep, new_row], ignore_index=True)
+            st.session_state.data_modified = True
             st.warning("Dépense ajoutée. Pensez à sauvegarder !")
 
     # Supprimer une dépense
@@ -223,6 +233,7 @@ if page == "📊 État des dépenses":
         )
         if st.button("Supprimer"):
             df_dep = df_dep.drop(rows_to_delete)
+            st.session_state.data_modified = True
             st.warning("Dépenses supprimées. Pensez à sauvegarder !")
 
     # Affichage
@@ -266,6 +277,7 @@ if page == "💰 Budget":
     # Appliquer les modifications au DataFrame principal
     if not edited_bud.equals(df_b):
         df_bud.update(edited_bud)
+        st.session_state.data_modified = True
         st.warning("Modifications appliquées. Pensez à sauvegarder !")
 
     # Ajouter une nouvelle ligne de budget
@@ -283,6 +295,7 @@ if page == "💰 Budget":
                 "groupe_compte": compute_groupe_compte(new_compte_bud)
             }])
             df_bud = pd.concat([df_bud, new_row_bud], ignore_index=True)
+            st.session_state.data_modified = True
             st.warning("Ligne de budget ajoutée. Pensez à sauvegarder !")
 
     # Supprimer une ligne de budget
@@ -295,6 +308,7 @@ if page == "💰 Budget":
         )
         if st.button("Supprimer"):
             df_bud = df_bud.drop(rows_to_delete_bud)
+            st.session_state.data_modified = True
             st.warning("Lignes de budget supprimées. Pensez à sauvegarder !")
 
     st.download_button(
