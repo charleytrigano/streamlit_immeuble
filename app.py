@@ -15,25 +15,40 @@ BUD_FILE = DATA_DIR / "budget_comptes_generaux.csv"
 # Créer le dossier data s'il n'existe pas
 DATA_DIR.mkdir(exist_ok=True)
 
-# Initialiser les DataFrames si les fichiers n'existent pas
-if not DEP_FILE.exists():
-    pd.DataFrame(columns=["annee", "compte", "poste", "fournisseur", "montant_ttc", "piece_id", "pdf_url"]).to_csv(DEP_FILE, index=False)
+# Initialiser les fichiers CSV s'ils n'existent pas
+def init_files():
+    if not DEP_FILE.exists():
+        pd.DataFrame(columns=["annee", "compte", "poste", "fournisseur", "montant_ttc", "piece_id", "pdf_url"]).to_csv(DEP_FILE, index=False)
+    if not BUD_FILE.exists():
+        pd.DataFrame(columns=["annee", "compte", "budget"]).to_csv(BUD_FILE, index=False)
 
-if not BUD_FILE.exists():
-    pd.DataFrame(columns=["annee", "compte", "budget"]).to_csv(BUD_FILE, index=False)
+init_files()
 
 # Charger les données
 @st.cache_data
 def load_data():
-    df_dep = pd.read_csv(DEP_FILE)
-    df_bud = pd.read_csv(BUD_FILE)
+    try:
+        df_dep = pd.read_csv(DEP_FILE)
+    except Exception as e:
+        st.error(f"Erreur de chargement des dépenses: {e}")
+        df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "fournisseur", "montant_ttc", "piece_id", "pdf_url"])
+
+    try:
+        df_bud = pd.read_csv(BUD_FILE)
+    except Exception as e:
+        st.error(f"Erreur de chargement du budget: {e}")
+        df_bud = pd.DataFrame(columns=["annee", "compte", "budget"])
+
     return df_dep, df_bud
 
 # Sauvegarder les données
 def save_data(df_dep, df_bud):
-    df_dep.to_csv(DEP_FILE, index=False)
-    df_bud.to_csv(BUD_FILE, index=False)
-    st.success("Données sauvegardées avec succès !")
+    try:
+        df_dep.to_csv(DEP_FILE, index=False)
+        df_bud.to_csv(BUD_FILE, index=False)
+        st.success("Données sauvegardées avec succès !")
+    except Exception as e:
+        st.error(f"Erreur de sauvegarde: {e}")
 
 # Charger les données
 df_dep, df_bud = load_data()
@@ -48,14 +63,14 @@ with st.sidebar:
     if st.button("💾 Sauvegarder"):
         save_data(df_dep, df_bud)
 
-    page = st.radio("Navigation", ["📊 Dépenses", "💰 Budget", "📊 Budget vs Réel"])
+    page = st.radio("Navigation", ["📊 Dépenses", "💰 Budget"])
 
 # Page Dépenses
 if page == "📊 Dépenses":
     st.header("Gestion des dépenses")
 
     # Filtres
-    annees = sorted(df_dep["annee"].unique()) if not df_dep.empty else [2025]
+    annees = [2025] if df_dep.empty else sorted(df_dep["annee"].unique())
     annee = st.selectbox("Année", annees)
 
     df_filtered = df_dep[df_dep["annee"] == annee] if not df_dep.empty else df_dep.copy()
@@ -114,7 +129,7 @@ if page == "💰 Budget":
     st.header("Gestion du budget")
 
     # Filtres
-    annees_bud = sorted(df_bud["annee"].unique()) if not df_bud.empty else [2025]
+    annees_bud = [2025] if df_bud.empty else sorted(df_bud["annee"].unique())
     annee_bud = st.selectbox("Année", annees_bud)
 
     df_bud_filtered = df_bud[df_bud["annee"] == annee_bud] if not df_bud.empty else df_bud.copy()
@@ -159,20 +174,3 @@ if page == "💰 Budget":
         if st.button("Supprimer"):
             df_bud = df_bud.drop(rows_to_delete_bud)
             st.warning("Lignes de budget supprimées. Pensez à sauvegarder.")
-
-# Page Budget vs Réel
-if page == "📊 Budget vs Réel":
-    st.header("Comparaison Budget vs Réel")
-
-    annee_comp = st.selectbox("Année", sorted(df_dep["annee"].unique()) if not df_dep.empty else [2025])
-
-    df_dep_comp = df_dep[df_dep["annee"] == annee_comp] if not df_dep.empty else df_dep
-    df_bud_comp = df_bud[df_bud["annee"] == annee_comp] if not df_bud.empty else df_bud
-
-    # Calcul des écarts
-    reel = df_dep_comp.groupby("compte")["montant_ttc"].sum().reset_index()
-    comp = df_bud_comp.merge(reel, on="compte", how="left").fillna(0)
-    comp["Écart (€)"] = comp["montant_ttc"] - comp["budget"]
-    comp["Écart (%)"] = (comp["Écart (€)"] / comp["budget"] * 100).round(1)
-
-    st.dataframe(comp[["compte", "budget", "montant_ttc", "Écart (€)", "Écart (%)"]])
