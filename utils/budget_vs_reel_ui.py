@@ -20,6 +20,10 @@ def budget_vs_reel_ui(supabase):
         st.warning("Aucun budget pour cette année.")
         return
 
+    st.write("Colonnes dépenses :", df_dep.columns.tolist())
+    st.dataframe(df_dep.head())
+    st.stop()
+
     df_comp = compute_budget_vs_reel(df_bud, df_dep)
 
     if df_comp.empty:
