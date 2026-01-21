@@ -207,6 +207,9 @@ if page == "🔍 Analyse détaillée":
     dep_neg = df_f[df_f["montant_ttc"] < 0]["montant_ttc"].sum()
     net = dep_pos + dep_neg
 
+elif page == "💰 Budget":
+    budget_ui(supabase)
+
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Dépenses brutes (€)", f"{dep_pos:,.0f}".replace(",", " "))
     k2.metric("Avoirs (€)", f"{dep_neg:,.0f}".replace(",", " "))
