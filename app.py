@@ -1,11 +1,8 @@
 import streamlit as st
 import pandas as pd
 from pathlib import Path
-import os
 
-# ======================================================
-# CONFIGURATION DE BASE
-# ======================================================
+# Configuration de base
 st.set_page_config(page_title="Gestion des Charges", layout="wide")
 st.title("🏠 Gestion des Charges de l'Immeuble")
 
@@ -24,29 +21,24 @@ def init_files():
 
 init_files()
 
-# ======================================================
-# CHARGEMENT ET SAUVEGARDE DES DONNÉES
-# ======================================================
+# Charger les données
 @st.cache_data
 def load_data():
     try:
         df_dep = pd.read_csv(DEP_FILE)
-        if df_dep.empty:
-            df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "montant_ttc"])
     except Exception as e:
         st.error(f"Erreur chargement dépenses: {e}")
         df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "montant_ttc"])
 
     try:
         df_bud = pd.read_csv(BUD_FILE)
-        if df_bud.empty:
-            df_bud = pd.DataFrame(columns=["annee", "compte", "budget"])
     except Exception as e:
         st.error(f"Erreur chargement budget: {e}")
         df_bud = pd.DataFrame(columns=["annee", "compte", "budget"])
 
     return df_dep, df_bud
 
+# Sauvegarder les données
 def save_data(df_dep, df_bud):
     try:
         df_dep.to_csv(DEP_FILE, index=False)
@@ -58,9 +50,7 @@ def save_data(df_dep, df_bud):
 # Charger les données
 df_dep, df_bud = load_data()
 
-# ======================================================
-# INTERFACE UTILISATEUR
-# ======================================================
+# Interface
 with st.sidebar:
     st.markdown("### 📁 Actions")
     if st.button("🔄 Recharger"):
@@ -68,13 +58,11 @@ with st.sidebar:
         st.rerun()
 
     if st.button("💾 Sauvegarder"):
-        save_data(df_dep, df_bud)
+        save_data(df_dep, df_bud)  # Sauvegarde uniquement quand l'utilisateur clique
 
     page = st.radio("Navigation", ["📊 Dépenses", "💰 Budget"])
 
-# ======================================================
-# PAGE DÉPENSES
-# ======================================================
+# Page Dépenses
 if page == "📊 Dépenses":
     st.header("📋 Gestion des Dépenses")
 
@@ -127,9 +115,7 @@ if page == "📊 Dépenses":
             df_dep = df_dep.drop(rows_to_delete)
             st.warning("⚠️ Dépenses supprimées. Sauvegardez pour enregistrer.")
 
-# ======================================================
-# PAGE BUDGET
-# ======================================================
+# Page Budget
 if page == "💰 Budget":
     st.header("💰 Gestion du Budget")
 
