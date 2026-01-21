@@ -116,6 +116,9 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
+    if st.button("💾 Sauvegarder les données"):
+        save_data(df_dep, df_bud)
+
     page = st.radio(
         "Navigation",
         ["📊 État des dépenses", "💰 Budget", "📊 Budget vs Réel"]
@@ -183,8 +186,7 @@ if page == "📊 État des dépenses":
     # Appliquer les modifications au DataFrame principal
     if not edited_df.equals(df_f):
         df_dep.update(edited_df)
-        save_data(df_dep, df_bud)
-        st.rerun()
+        st.warning("Modifications appliquées. Pensez à sauvegarder !")
 
     # Ajouter une nouvelle dépense
     st.markdown("### ➕ Ajouter une dépense")
@@ -210,8 +212,7 @@ if page == "📊 État des dépenses":
                 "statut_facture": "Justifiée" if new_pdf_url else "À justifier"
             }])
             df_dep = pd.concat([df_dep, new_row], ignore_index=True)
-            save_data(df_dep, df_bud)
-            st.rerun()
+            st.warning("Dépense ajoutée. Pensez à sauvegarder !")
 
     # Supprimer une dépense
     st.markdown("### ❌ Supprimer une dépense")
@@ -223,8 +224,7 @@ if page == "📊 État des dépenses":
         )
         if st.button("Supprimer"):
             df_dep = df_dep.drop(rows_to_delete)
-            save_data(df_dep, df_bud)
-            st.rerun()
+            st.warning("Dépenses supprimées. Pensez à sauvegarder !")
 
     # Affichage
     if not df_f.empty:
@@ -268,8 +268,7 @@ if page == "💰 Budget":
     # Appliquer les modifications au DataFrame principal
     if not edited_bud.equals(df_b):
         df_bud.update(edited_bud)
-        save_data(df_dep, df_bud)
-        st.rerun()
+        st.warning("Modifications appliquées. Pensez à sauvegarder !")
 
     # Ajouter une nouvelle ligne de budget
     st.markdown("### ➕ Ajouter une ligne de budget")
@@ -286,8 +285,7 @@ if page == "💰 Budget":
                 "groupe_compte": compute_groupe_compte(new_compte_bud)
             }])
             df_bud = pd.concat([df_bud, new_row_bud], ignore_index=True)
-            save_data(df_dep, df_bud)
-            st.rerun()
+            st.warning("Ligne de budget ajoutée. Pensez à sauvegarder !")
 
     # Supprimer une ligne de budget
     st.markdown("### ❌ Supprimer une ligne de budget")
@@ -299,8 +297,7 @@ if page == "💰 Budget":
         )
         if st.button("Supprimer"):
             df_bud = df_bud.drop(rows_to_delete_bud)
-            save_data(df_dep, df_bud)
-            st.rerun()
+            st.warning("Lignes de budget supprimées. Pensez à sauvegarder !")
 
     st.download_button(
         "💾 Télécharger budget_comptes_generaux.csv",
