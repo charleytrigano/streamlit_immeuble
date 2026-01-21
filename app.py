@@ -2,42 +2,34 @@ import streamlit as st
 import pandas as pd
 
 from utils.supabase_client import get_supabase
-from utils.depenses_repo import load_depenses, insert_depense, delete_depense
-from utils.budgets_repo import load_budgets, upsert_budgets, delete_budget
-from utils.budget_vs_reel_repo import compute_budget_vs_reel
 
-# ======================
+# ======================================================
 # CONFIG
-# ======================
+# ======================================================
 st.set_page_config(
     page_title="Pilotage des charges de l’immeuble",
     layout="wide",
 )
 
+st.title("Pilotage des charges de l’immeuble")
+
 supabase = get_supabase()
-
-# ======================
-# SIDEBAR
-# ======================
-st.sidebar.title("📊 Navigation")
-
-page = st.sidebar.radio(
-    "Aller à",
-    [
-        "📈 État des dépenses",
-        "💰 Budget",
-        "📊 Budget vs Réel",
-    ],
-)
 
 ANNEES = list(range(2020, 2031))
 ANNEE_DEFAUT = ANNEES.index(2025)
 
-# =========================================================
+# ======================================================
+# SIDEBAR
+# ======================================================
+page = st.sidebar.radio(
+    "Navigation",
+    ["📈 État des dépenses", "💰 Budget", "📊 Budget vs Réel"],
+)
+
+# ======================================================
 # 📈 ÉTAT DES DÉPENSES
-# =========================================================
+# ======================================================
 if page == "📈 État des dépenses":
-    st.title("📈 État des dépenses")
 
     tabs = st.tabs(["📊 Consulter", "➕ Ajouter", "🗑 Supprimer"])
 
@@ -45,7 +37,16 @@ if page == "📈 État des dépenses":
     with tabs[0]:
         annee = st.selectbox("Année", ANNEES, index=ANNEE_DEFAUT)
 
-        df = load_depenses(supabase, annee)
+        dep = (
+            supabase
+            .table("depenses")
+            .select("*")
+            .eq("annee", annee)
+            .execute()
+            .data
+        )
+
+        df = pd.DataFrame(dep)
 
         if df.empty:
             st.warning("Aucune dépense pour cette année.")
@@ -65,8 +66,6 @@ if page == "📈 État des dépenses":
 
     # ---------- AJOUTER ----------
     with tabs[1]:
-        st.subheader("➕ Ajouter une dépense")
-
         with st.form("add_depense"):
             annee = st.selectbox("Année", ANNEES, index=ANNEE_DEFAUT)
             date = st.date_input("Date")
@@ -74,117 +73,166 @@ if page == "📈 État des dépenses":
             poste = st.text_input("Poste")
             fournisseur = st.text_input("Fournisseur")
             montant = st.number_input("Montant TTC", step=0.01)
-            piece_id = st.text_input("Pièce ID")
-            pdf_url = st.text_input("Lien PDF (Google Drive)")
+            piece_id = st.text_input("Pièce")
+            pdf_url = st.text_input("Lien facture (Google Drive preview)")
 
-            submitted = st.form_submit_button("Enregistrer")
+            submit = st.form_submit_button("💾 Enregistrer")
 
-            if submitted:
-                insert_depense(
-                    supabase,
-                    {
-                        "annee": annee,
-                        "date": date.isoformat(),
-                        "compte": compte,
-                        "poste": poste,
-                        "fournisseur": fournisseur,
-                        "montant_ttc": montant,
-                        "piece_id": piece_id,
-                        "pdf_url": pdf_url,
-                    },
-                )
-                st.success("Dépense ajoutée")
-                st.rerun()
+        if submit:
+            supabase.table("depenses").insert({
+                "annee": int(annee),
+                "date": date.isoformat(),
+                "compte": compte,
+                "poste": poste,
+                "fournisseur": fournisseur,
+                "montant_ttc": float(montant),
+                "piece_id": piece_id,
+                "pdf_url": pdf_url,
+            }).execute()
+
+            st.success("Dépense ajoutée")
+            st.rerun()
 
     # ---------- SUPPRIMER ----------
     with tabs[2]:
-        st.subheader("🗑 Supprimer une dépense")
+        annee = st.selectbox("Année", ANNEES, index=ANNEE_DEFAUT, key="del_dep")
+        dep = (
+            supabase
+            .table("depenses")
+            .select("id, poste, montant_ttc")
+            .eq("annee", annee)
+            .execute()
+            .data
+        )
 
-        annee = st.selectbox("Année", ANNEES, index=ANNEE_DEFAUT, key="del_dep_annee")
-        df = load_depenses(supabase, annee)
+        df = pd.DataFrame(dep)
 
         if not df.empty:
             dep_id = st.selectbox(
-                "Sélectionner une dépense",
+                "Dépense",
                 df["id"],
-                format_func=lambda x: f"{x}",
+                format_func=lambda i: f"{df.loc[df['id']==i,'poste'].values[0]} – {df.loc[df['id']==i,'montant_ttc'].values[0]} €",
             )
 
-            if st.button("Supprimer définitivement"):
-                delete_depense(supabase, dep_id)
+            if st.button("❌ Supprimer définitivement"):
+                supabase.table("depenses").delete().eq("id", dep_id).execute()
                 st.success("Dépense supprimée")
                 st.rerun()
 
-# =========================================================
+# ======================================================
 # 💰 BUDGET
-# =========================================================
+# ======================================================
 elif page == "💰 Budget":
-    st.title("💰 Budget annuel")
 
-    tabs = st.tabs(["📊 Consulter", "➕ Ajouter / Modifier", "🗑 Supprimer"])
+    annee = st.selectbox("Année budgétaire", ANNEES, index=ANNEE_DEFAUT)
+
+    tabs = st.tabs(["📊 Consulter", "➕ Ajouter", "✏️ Modifier", "🗑 Supprimer"])
+
+    bud = (
+        supabase
+        .table("budgets")
+        .select("*")
+        .eq("annee", annee)
+        .execute()
+        .data
+    )
+
+    df = pd.DataFrame(bud)
 
     # ---------- CONSULTER ----------
     with tabs[0]:
-        annee = st.selectbox("Année budgétaire", ANNEES, index=ANNEE_DEFAUT)
-        df = load_budgets(supabase, annee)
-
         if df.empty:
             st.warning("Aucun budget pour cette année.")
         else:
             st.metric("Budget total (€)", f"{df['budget'].sum():,.2f}")
             st.dataframe(df, use_container_width=True)
 
-    # ---------- AJOUTER / MODIFIER ----------
+    # ---------- AJOUTER ----------
     with tabs[1]:
-        annee = st.selectbox("Année", ANNEES, index=ANNEE_DEFAUT, key="edit_budget")
+        with st.form("add_budget"):
+            compte = st.text_input("Compte")
+            budget = st.number_input("Budget (€)", step=100.0)
+            submit = st.form_submit_button("💾 Enregistrer")
 
-        df = load_budgets(supabase, annee)
-        if df.empty:
-            df = pd.DataFrame(columns=["compte", "budget", "groupe_compte"])
+        if submit:
+            supabase.table("budgets").upsert(
+                {
+                    "annee": int(annee),
+                    "compte": compte,
+                    "budget": float(budget),
+                },
+                on_conflict="annee,compte",
+            ).execute()
 
-        edited = st.data_editor(
-            df,
-            num_rows="dynamic",
-            use_container_width=True,
-        )
-
-        if st.button("💾 Enregistrer le budget"):
-            edited["annee"] = annee
-            upsert_budgets(supabase, edited)
             st.success("Budget enregistré")
             st.rerun()
 
-    # ---------- SUPPRIMER ----------
+    # ---------- MODIFIER ----------
     with tabs[2]:
-        annee = st.selectbox("Année", ANNEES, index=ANNEE_DEFAUT, key="del_budget")
-        df = load_budgets(supabase, annee)
-
         if not df.empty:
-            compte = st.selectbox("Compte", df["compte"])
+            row_id = st.selectbox(
+                "Poste",
+                df["id"],
+                format_func=lambda i: f"{df.loc[df['id']==i,'compte'].values[0]}",
+            )
 
-            if st.button("Supprimer ce compte"):
-                delete_budget(supabase, annee, compte)
+            row = df[df["id"] == row_id].iloc[0]
+
+            new_budget = st.number_input(
+                "Nouveau budget (€)",
+                value=float(row["budget"]),
+                step=100.0,
+            )
+
+            if st.button("💾 Enregistrer modification"):
+                supabase.table("budgets") \
+                    .update({"budget": float(new_budget)}) \
+                    .eq("id", row_id) \
+                    .execute()
+
+                st.success("Budget modifié")
+                st.rerun()
+
+    # ---------- SUPPRIMER ----------
+    with tabs[3]:
+        if not df.empty:
+            row_id = st.selectbox(
+                "Budget",
+                df["id"],
+                format_func=lambda i: f"{df.loc[df['id']==i,'compte'].values[0]}",
+            )
+
+            if st.button("❌ Supprimer"):
+                supabase.table("budgets").delete().eq("id", row_id).execute()
                 st.success("Budget supprimé")
                 st.rerun()
 
-# =========================================================
+# ======================================================
 # 📊 BUDGET VS RÉEL
-# =========================================================
+# ======================================================
 elif page == "📊 Budget vs Réel":
-    st.title("📊 Budget vs Réel")
 
     annee = st.selectbox("Année", ANNEES, index=ANNEE_DEFAUT)
 
-    df_dep = load_depenses(supabase, annee)
-    df_bud = load_budgets(supabase, annee)
+    dep = pd.DataFrame(
+        supabase.table("depenses").select("*").eq("annee", annee).execute().data
+    )
+    bud = pd.DataFrame(
+        supabase.table("budgets").select("*").eq("annee", annee).execute().data
+    )
 
-    if df_dep.empty or df_bud.empty:
-        st.warning("Données insuffisantes pour cette année.")
+    if dep.empty or bud.empty:
+        st.warning("Données insuffisantes.")
     else:
-        df = compute_budget_vs_reel(df_bud, df_dep)
+        dep["compte_budget"] = dep["compte"].str[:3]
+        reel = dep.groupby("compte_budget")["montant_ttc"].sum().reset_index()
+        comp = bud.merge(reel, left_on="compte", right_on="compte_budget", how="left")
+        comp["montant_ttc"] = comp["montant_ttc"].fillna(0)
+        comp["ecart"] = comp["montant_ttc"] - comp["budget"]
+        comp["ecart_pct"] = comp["ecart"] / comp["budget"] * 100
 
         col1, col2 = st.columns(2)
-        col1.metric("Budget total (€)", f"{df['budget'].sum():,.2f}")
-        col2.metric("Réel total (€)", f"{df['reel'].sum():,.2f}")
+        col1.metric("Budget total (€)", f"{comp['budget'].sum():,.2f}")
+        col2.metric("Réel total (€)", f"{comp['montant_ttc'].sum():,.2f}")
 
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(comp, use_container_width=True)
