@@ -3,6 +3,14 @@ import pandas as pd
 import unicodedata
 from pathlib import Path
 
+from utils.supabase_client import get_supabase
+
+supabase = get_supabase()
+
+test = supabase.table("budgets").select("*").limit(1).execute()
+st.write("Connexion Supabase OK", test.data)
+
+
 # ======================================================
 # CONFIG
 # ======================================================
