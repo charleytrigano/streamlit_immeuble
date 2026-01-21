@@ -26,12 +26,16 @@ init_files()
 def load_data():
     try:
         df_dep = pd.read_csv(DEP_FILE)
+        if df_dep.empty:
+            df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "montant_ttc"])
     except Exception as e:
         st.error(f"Erreur chargement dépenses: {e}")
         df_dep = pd.DataFrame(columns=["annee", "compte", "poste", "montant_ttc"])
 
     try:
         df_bud = pd.read_csv(BUD_FILE)
+        if df_bud.empty:
+            df_bud = pd.DataFrame(columns=["annee", "compte", "budget"])
     except Exception as e:
         st.error(f"Erreur chargement budget: {e}")
         df_bud = pd.DataFrame(columns=["annee", "compte", "budget"])
