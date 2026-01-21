@@ -133,7 +133,6 @@ df_dep, df_bud = load_data()
 # 📊 ÉTAT DES DÉPENSES (CRUD)
 # ======================================================
 if page == "📊 État des dépenses":
-
     st.markdown("### 🔎 Filtres")
     f1, f2, f3, f4 = st.columns(4)
     with f1:
@@ -250,7 +249,6 @@ if page == "📊 État des dépenses":
 # 💰 BUDGET (CRUD)
 # ======================================================
 if page == "💰 Budget":
-
     annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()) if not df_bud.empty else [2025])
     df_b = df_bud[df_bud["annee"] == annee].copy() if not df_bud.empty else df_bud.copy()
 
@@ -310,7 +308,6 @@ if page == "💰 Budget":
 # 📊 BUDGET VS RÉEL
 # ======================================================
 if page == "📊 Budget vs Réel":
-
     annee = st.selectbox("Année", sorted(df_dep["annee"].unique()) if not df_dep.empty else [2025])
 
     dep = df_dep[df_dep["annee"] == annee] if not df_dep.empty else df_dep
