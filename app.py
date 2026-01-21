@@ -30,16 +30,13 @@ def compute_groupe_compte(compte):
     return compte[:4] if compte.startswith(("621", "622")) else compte[:3]
 
 
-def make_facture_link(row):
-    if row["pdf_url"] in ("", "nan"):
-        return row["piece_id"]
-    return f'{row["piece_id"]} – <a href="{row["pdf_url"]}" target="_blank">📄 Ouvrir</a>'
+def make_facture_cell(row):
+    pid = row.get("piece_id", "")
+    url = row.get("pdf_url", "")
+    if isinstance(url, str) and url.strip():
+        return f'{pid} – <a href="{url}" target="_blank">📄 Ouvrir</a>'
+    return pid if pid else "—"
 
-
-def build_drive_search_url(folder_url, piece_id):
-    if folder_url.strip() == "" or piece_id.strip() == "":
-        return ""
-    return f"{folder_url}?q={piece_id.replace(' ', '%20')}"
 
 # ======================================================
 # NORMALISATION
@@ -53,7 +50,7 @@ def normalize_depenses(df):
 
     required = {"annee", "compte", "montant_ttc"}
     if not required.issubset(df.columns):
-        st.error(f"Colonnes manquantes : {required - set(df.columns)}")
+        st.error(f"Colonnes manquantes dans les dépenses : {required - set(df.columns)}")
         st.stop()
 
     df["annee"] = df["annee"].astype(int)
@@ -63,6 +60,10 @@ def normalize_depenses(df):
     df["pdf_url"] = df["pdf_url"].astype(str).str.strip()
     df["groupe_compte"] = df["compte"].apply(compute_groupe_compte)
 
+    df["statut_facture"] = df["pdf_url"].apply(
+        lambda x: "Justifiée" if x else "À justifier"
+    )
+
     return df
 
 
@@ -71,7 +72,7 @@ def normalize_budget(df):
 
     required = {"annee", "compte", "budget"}
     if not required.issubset(df.columns):
-        st.error(f"Colonnes manquantes : {required - set(df.columns)}")
+        st.error(f"Colonnes manquantes dans le budget : {required - set(df.columns)}")
         st.stop()
 
     df["annee"] = df["annee"].astype(int)
@@ -81,22 +82,32 @@ def normalize_budget(df):
 
     return df
 
+
 # ======================================================
-# CHARGEMENT
+# CHARGEMENT DES DONNÉES
 # ======================================================
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_data():
-    df_dep = normalize_depenses(pd.read_csv(DEP_FILE, encoding="utf-8-sig"))
-    ddf_bud = normalize_budget(
-    pd.read_csv(
-        BUD_FILE,
-        sep=None,                 # auto-détection du séparateur
-        engine="python",          # parseur tolérant
-        encoding="utf-8-sig",
-        on_bad_lines="skip"       # ignore les lignes corrompues
+    df_dep = normalize_depenses(
+        pd.read_csv(
+            DEP_FILE,
+            sep=None,
+            engine="python",
+            encoding="utf-8-sig",
+            on_bad_lines="skip",
+        )
     )
-)
-f_bud = normalize_budget(pd.read_csv(BUD_FILE, encoding="utf-8-sig"))
+
+    df_bud = normalize_budget(
+        pd.read_csv(
+            BUD_FILE,
+            sep=None,
+            engine="python",
+            encoding="utf-8-sig",
+            on_bad_lines="skip",
+        )
+    )
+
     return df_dep, df_bud
 
 
@@ -107,15 +118,10 @@ df_dep, df_bud = load_data()
 # ======================================================
 with st.sidebar:
     st.markdown("## 📂 Données")
+
     if st.button("🔄 Recharger les données"):
         st.cache_data.clear()
         st.rerun()
-
-    st.markdown("## 📁 Google Drive")
-    drive_folder = st.text_input(
-        "Lien du dossier Google Drive (année)",
-        placeholder="https://drive.google.com/drive/folders/XXXX"
-    )
 
     page = st.radio(
         "Navigation",
@@ -123,13 +129,52 @@ with st.sidebar:
     )
 
 # ======================================================
-# 📊 ÉTAT DES DÉPENSES — ÉDITION + AUTO PDF
+# 📊 ÉTAT DES DÉPENSES
 # ======================================================
 if page == "📊 État des dépenses":
 
-    annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
-    df_f = df_dep[df_dep["annee"] == annee].copy()
+    st.markdown("### 🔎 Filtres")
 
+    f1, f2, f3, f4 = st.columns(4)
+    with f1:
+        annee = st.selectbox("Année", sorted(df_dep["annee"].unique()))
+    with f2:
+        groupe = st.selectbox(
+            "Groupe de comptes",
+            ["Tous"] + sorted(df_dep["groupe_compte"].unique())
+        )
+    with f3:
+        fournisseur = st.selectbox(
+            "Fournisseur",
+            ["Tous"] + sorted(df_dep["fournisseur"].unique())
+        )
+    with f4:
+        statut = st.selectbox(
+            "Statut facture",
+            ["Tous", "Justifiée", "À justifier"]
+        )
+
+    df_f = df_dep[df_dep["annee"] == annee].copy()
+    if groupe != "Tous":
+        df_f = df_f[df_f["groupe_compte"] == groupe]
+    if fournisseur != "Tous":
+        df_f = df_f[df_f["fournisseur"] == fournisseur]
+    if statut != "Tous":
+        df_f = df_f[df_f["statut_facture"] == statut]
+
+    # KPI
+    dep_pos = df_f[df_f["montant_ttc"] > 0]["montant_ttc"].sum()
+    dep_neg = df_f[df_f["montant_ttc"] < 0]["montant_ttc"].sum()
+    net = dep_pos + dep_neg
+    pct_ok = (df_f["statut_facture"] == "Justifiée").mean() * 100 if len(df_f) else 0
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Dépenses brutes (€)", f"{dep_pos:,.0f}".replace(",", " "))
+    k2.metric("Avoirs (€)", f"{dep_neg:,.0f}".replace(",", " "))
+    k3.metric("Dépenses nettes (€)", f"{net:,.0f}".replace(",", " "))
+    k4.metric("% justifiées", f"{pct_ok:.0f} %")
+
+    # Édition
     st.markdown("### ✏️ Modifier les dépenses")
     df_edit = st.data_editor(
         df_f,
@@ -138,21 +183,14 @@ if page == "📊 État des dépenses":
         key="edit_dep"
     )
 
-    if drive_folder:
-        st.markdown("### 🔗 Génération automatique des liens PDF")
-        df_edit["pdf_url"] = df_edit.apply(
-            lambda r: r["pdf_url"]
-            if r["pdf_url"] not in ("", "nan")
-            else build_drive_search_url(drive_folder, r["piece_id"]),
-            axis=1
-        )
+    df_edit["Facture"] = df_edit.apply(make_facture_cell, axis=1)
+    df_edit["Montant (€)"] = df_edit["montant_ttc"].map(
+        lambda x: f"{x:,.2f}".replace(",", " ")
+    )
 
-    df_edit["Facture"] = df_edit.apply(make_facture_link, axis=1)
-
-    st.markdown("### 📋 Aperçu")
     st.markdown(
         df_edit[
-            ["compte", "poste", "fournisseur", "montant_ttc", "Facture"]
+            ["compte", "poste", "fournisseur", "Montant (€)", "statut_facture", "Facture"]
         ].to_html(escape=False, index=False),
         unsafe_allow_html=True
     )
@@ -161,18 +199,23 @@ if page == "📊 État des dépenses":
         "💾 Télécharger base_depenses_immeuble.csv",
         df_edit.to_csv(index=False).encode("utf-8"),
         file_name="base_depenses_immeuble.csv",
-        mime="text/csv"
+        mime="text/csv",
     )
 
-    st.info("⚠️ Les modifications sont sauvegardées uniquement après commit GitHub.")
+    st.info(
+        "Les modifications sont locales à la session.\n"
+        "➡️ Télécharge le CSV et commit-le dans GitHub pour les conserver."
+    )
 
 # ======================================================
-# 💰 BUDGET — ÉDITION
+# 💰 BUDGET
 # ======================================================
 if page == "💰 Budget":
 
     annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()))
-    df_b = df_bud[df_bud["annee"] == annee]
+    df_b = df_bud[df_bud["annee"] == annee].copy()
+
+    st.metric("Budget total (€)", f"{df_b['budget'].sum():,.0f}".replace(",", " "))
 
     st.markdown("### ✏️ Modifier le budget")
     df_edit = st.data_editor(
@@ -182,13 +225,11 @@ if page == "💰 Budget":
         key="edit_budget"
     )
 
-    st.metric("Budget total (€)", f"{df_edit['budget'].sum():,.0f}".replace(",", " "))
-
     st.download_button(
         "💾 Télécharger budget_comptes_generaux.csv",
         df_edit.to_csv(index=False).encode("utf-8"),
         file_name="budget_comptes_generaux.csv",
-        mime="text/csv"
+        mime="text/csv",
     )
 
 # ======================================================
@@ -207,4 +248,14 @@ if page == "📊 Budget vs Réel":
     comp["Écart (€)"] = comp["montant_ttc"] - comp["budget"]
     comp["Écart (%)"] = (comp["Écart (€)"] / comp["budget"] * 100).round(1)
 
-    st.dataframe(comp, use_container_width=True)
+    k1, k2, k3 = st.columns(3)
+    k1.metric("Budget (€)", f"{comp['budget'].sum():,.0f}".replace(",", " "))
+    k2.metric("Réel (€)", f"{comp['montant_ttc'].sum():,.0f}".replace(",", " "))
+    k3.metric("Écart total (€)", f"{comp['Écart (€)'].sum():,.0f}".replace(",", " "))
+
+    st.dataframe(
+        comp[
+            ["groupe_compte", "budget", "montant_ttc", "Écart (€)", "Écart (%)"]
+        ],
+        use_container_width=True
+    )
