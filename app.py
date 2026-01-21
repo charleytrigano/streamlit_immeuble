@@ -87,7 +87,16 @@ def normalize_budget(df):
 @st.cache_data
 def load_data():
     df_dep = normalize_depenses(pd.read_csv(DEP_FILE, encoding="utf-8-sig"))
-    df_bud = normalize_budget(pd.read_csv(BUD_FILE, encoding="utf-8-sig"))
+    ddf_bud = normalize_budget(
+    pd.read_csv(
+        BUD_FILE,
+        sep=None,                 # auto-détection du séparateur
+        engine="python",          # parseur tolérant
+        encoding="utf-8-sig",
+        on_bad_lines="skip"       # ignore les lignes corrompues
+    )
+)
+f_bud = normalize_budget(pd.read_csv(BUD_FILE, encoding="utf-8-sig"))
     return df_dep, df_bud
 
 
