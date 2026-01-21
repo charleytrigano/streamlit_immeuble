@@ -84,7 +84,38 @@ with st.sidebar:
 
     page = st.radio(
         "Navigation",
-        ["📊 Budget vs Réel", "🔍 Analyse détaillée"]
+        ["💰 Budget", "📊 Budget vs Réel", "🔍 Analyse détaillée"]
+    )
+
+# ======================================================
+# 💰 BUDGET
+# ======================================================
+if page == "💰 Budget":
+
+    annee = st.selectbox("Année budgétaire", sorted(df_bud["annee"].unique()))
+    df_b = df_bud[df_bud["annee"] == annee].copy()
+
+    st.metric(
+        "Budget total (€)",
+        f"{df_b['budget'].sum():,.0f}".replace(",", " ")
+    )
+
+    st.markdown("### ✏️ Édition du budget")
+    df_edit = st.data_editor(
+        df_b,
+        num_rows="dynamic",
+        use_container_width=True
+    )
+
+    st.download_button(
+        "📥 Télécharger budget_comptes_generaux.csv",
+        df_edit.to_csv(index=False).encode("utf-8"),
+        file_name="budget_comptes_generaux.csv"
+    )
+
+    st.info(
+        "Les modifications sont temporaires.\n"
+        "➡️ Télécharge le CSV et commit-le dans GitHub pour les rendre officielles."
     )
 
 # ======================================================
@@ -110,10 +141,7 @@ if page == "📊 Budget vs Réel":
     k2.metric("Réel net (€)", f"{comp['montant_ttc'].sum():,.0f}".replace(",", " "))
     k3.metric("Écart total (€)", f"{comp['Écart (€)'].sum():,.0f}".replace(",", " "))
     k4.metric("Écart moyen (%)", f"{comp['Écart (%)'].mean():.1f} %")
-    k5.metric(
-        "Comptes en dépassement",
-        int((comp["Écart (€)"] > 0).sum())
-    )
+    k5.metric("Comptes en dépassement", int((comp["Écart (€)"] > 0).sum()))
 
     st.dataframe(
         comp[
@@ -123,11 +151,9 @@ if page == "📊 Budget vs Réel":
     )
 
 # ======================================================
-# 🔍 ANALYSE DÉTAILLÉE (DRILL-DOWN)
+# 🔍 ANALYSE DÉTAILLÉE
 # ======================================================
 if page == "🔍 Analyse détaillée":
-
-    st.markdown("### 🔎 Filtres")
 
     f1, f2, f3, f4 = st.columns(4)
 
@@ -157,7 +183,6 @@ if page == "🔍 Analyse détaillée":
     if four != "Tous":
         df_f = df_f[df_f["fournisseur"] == four]
 
-    # KPI filtrés
     dep_pos = df_f[df_f["montant_ttc"] > 0]["montant_ttc"].sum()
     dep_neg = df_f[df_f["montant_ttc"] < 0]["montant_ttc"].sum()
     net = dep_pos + dep_neg
