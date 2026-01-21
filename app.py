@@ -2,6 +2,10 @@ import streamlit as st
 import pandas as pd
 import unicodedata
 from pathlib import Path
+from utils.supabase_client import get_supabase
+from utils.budget_ui import budget_ui
+
+supabase = get_supabase()
 
 from utils.supabase_client import get_supabase
 
