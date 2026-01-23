@@ -9,13 +9,16 @@ def depenses_ui(supabase):
     # =========================
     # CHARGEMENT DES DONNÉES
     # =========================
-    rows = supabase.table("depenses").select("*").execute().data
+    rows = supabase.table("depenses").select("*").order("date", desc=True).execute().data
     df = pd.DataFrame(rows) if rows else pd.DataFrame()
 
+    # =========================
+    # SÉLECTEUR ANNÉE
+    # =========================
     if df.empty:
         annees = [date.today().year]
     else:
-        annees = sorted(df["annee"].unique())
+        annees = sorted(df["annee"].dropna().unique())
 
     annee = st.selectbox("Année", annees, index=len(annees) - 1)
 
@@ -44,7 +47,10 @@ def depenses_ui(supabase):
     # CONSULTER
     # =========================
     with tab_consulter:
-        st.dataframe(df_annee, use_container_width=True)
+        if df_annee.empty:
+            st.info("Aucune dépense pour cette année.")
+        else:
+            st.dataframe(df_annee, use_container_width=True)
 
     # =========================
     # AJOUTER
@@ -67,7 +73,7 @@ def depenses_ui(supabase):
                 ["Charge", "Avoir", "Remboursement"]
             )
 
-            submit = st.form_submit_button("Enregistrer")
+            submit = st.form_submit_button("💾 Enregistrer")
 
         if submit:
             montant_final = (
@@ -95,46 +101,60 @@ def depenses_ui(supabase):
     # =========================
     with tab_modifier:
         if df_annee.empty:
-            st.info("Aucune dépense à modifier")
+            st.info("Aucune dépense à modifier.")
         else:
             ids = df_annee["id"].tolist()
             dep_id = st.selectbox(
                 "Sélectionner une dépense",
                 ids,
-                key="mod_select"
+                key="edit_depense"
             )
 
             dep = df_annee[df_annee["id"] == dep_id].iloc[0]
 
+            # sécurisation du type (lignes anciennes)
+            types = ["Charge", "Avoir", "Remboursement"]
+            current_type = dep["type"] if dep.get("type") in types else "Charge"
+
             with st.form("edit_depense"):
-                new_date = st.date_input("Date", value=pd.to_datetime(dep["date"]))
+                new_date = st.date_input(
+                    "Date",
+                    value=pd.to_datetime(dep["date"])
+                )
+
                 new_compte = st.text_input("Compte", dep["compte"])
                 new_poste = st.text_input("Poste", dep["poste"])
                 new_fournisseur = st.text_input("Fournisseur", dep["fournisseur"])
 
                 new_montant = st.number_input(
                     "Montant TTC (€)",
-                    value=float(dep["montant_ttc"]),
+                    value=abs(float(dep["montant_ttc"])),
                     step=0.01,
                     format="%.2f"
                 )
 
                 new_type = st.selectbox(
                     "Type",
-                    ["Charge", "Avoir", "Remboursement"],
-                    index=["Charge", "Avoir", "Remboursement"].index(dep["type"])
+                    types,
+                    index=types.index(current_type)
                 )
 
-                save = st.form_submit_button("Mettre à jour")
+                save = st.form_submit_button("💾 Mettre à jour")
 
             if save:
+                montant_final = (
+                    -abs(new_montant)
+                    if new_type in ["Avoir", "Remboursement"]
+                    else abs(new_montant)
+                )
+
                 supabase.table("depenses").update({
                     "date": new_date.isoformat(),
                     "annee": new_date.year,
                     "compte": new_compte,
                     "poste": new_poste,
                     "fournisseur": new_fournisseur,
-                    "montant_ttc": new_montant,
+                    "montant_ttc": montant_final,
                     "type": new_type,
                 }).eq("id", dep_id).execute()
 
@@ -146,15 +166,15 @@ def depenses_ui(supabase):
     # =========================
     with tab_supprimer:
         if df_annee.empty:
-            st.info("Aucune dépense à supprimer")
+            st.info("Aucune dépense à supprimer.")
         else:
             del_id = st.selectbox(
                 "Sélectionner une dépense",
                 df_annee["id"],
-                key="del_select"
+                key="delete_depense"
             )
 
-            if st.button("Supprimer définitivement"):
+            if st.button("🗑 Supprimer définitivement"):
                 supabase.table("depenses").delete().eq("id", del_id).execute()
                 st.success("Dépense supprimée")
                 st.rerun()
