@@ -28,7 +28,8 @@ def depenses_ui(supabase):
         min_value=2000,
         max_value=current_year + 10,
         value=current_year,
-        step=1
+        step=1,
+        key="depenses_annee"
     )
 
     df_annee = df[df["annee"] == annee] if not df.empty else pd.DataFrame()
@@ -40,10 +41,10 @@ def depenses_ui(supabase):
     nb = len(df_annee)
     moyenne = total / nb if nb else 0
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total dépenses (€)", f"{total:,.2f}")
-    col2.metric("Nombre de lignes", nb)
-    col3.metric("Dépense moyenne (€)", f"{moyenne:,.2f}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total dépenses (€)", f"{total:,.2f}")
+    c2.metric("Nombre de lignes", nb)
+    c3.metric("Dépense moyenne (€)", f"{moyenne:,.2f}")
 
     # =========================
     # 4. ONGLETS
@@ -65,44 +66,41 @@ def depenses_ui(supabase):
             )
 
     # =========================
-    # 6. AJOUTER (CORRIGÉ)
+    # 6. AJOUTER
     # =========================
     with tab_add:
         st.subheader("Ajouter une dépense")
 
-        with st.form("add_depense"):
-            date_depense = st.date_input("Date")
-            compte = st.text_input("Compte")
-            poste = st.text_input("Poste")
-            fournisseur = st.text_input("Fournisseur")
-            montant = st.number_input("Montant TTC (€)", min_value=0.0, step=10.0)
-            lien = st.text_input("Lien facture (optionnel)")
-            type_dep = st.text_input("Type (optionnel)")
+        with st.form("add_depense_form"):
+            date_depense = st.date_input("Date", key="add_date")
+            compte = st.text_input("Compte", key="add_compte")
+            poste = st.text_input("Poste", key="add_poste")
+            fournisseur = st.text_input("Fournisseur", key="add_fournisseur")
+            montant = st.number_input(
+                "Montant TTC (€)",
+                step=10.0,
+                key="add_montant"
+            )
+            lien = st.text_input("Lien facture (optionnel)", key="add_lien")
+            type_dep = st.text_input("Type (optionnel)", key="add_type")
 
             submit = st.form_submit_button("💾 Enregistrer")
 
         if submit:
-            if not compte or not poste:
-                st.error("Compte et poste sont obligatoires.")
-            else:
-                payload = {
-                    "annee": date_depense.year,
-                    "date": date_depense.isoformat(),  # ✅ CORRECTION CRITIQUE
-                    "compte": compte,
-                    "poste": poste,
-                    "fournisseur": fournisseur,
-                    "montant_ttc": float(montant),
-                    "piece": lien or None,
-                    "type": type_dep or None,
-                }
+            payload = {
+                "annee": date_depense.year,
+                "date": date_depense.isoformat(),
+                "compte": compte,
+                "poste": poste,
+                "fournisseur": fournisseur,
+                "montant_ttc": float(montant),
+                "piece": lien or None,
+                "type": type_dep or None,
+            }
 
-                try:
-                    supabase.table("depenses").insert(payload).execute()
-                    st.success("Dépense ajoutée avec succès.")
-                    st.rerun()
-                except Exception as e:
-                    st.error("Erreur lors de l'ajout de la dépense.")
-                    st.exception(e)
+            supabase.table("depenses").insert(payload).execute()
+            st.success("Dépense ajoutée.")
+            st.rerun()
 
     # =========================
     # 7. MODIFIER
@@ -113,15 +111,41 @@ def depenses_ui(supabase):
         if df_annee.empty:
             st.info("Aucune dépense à modifier.")
         else:
-            id_sel = st.selectbox("Sélectionner", df_annee["id"])
+            id_sel = st.selectbox(
+                "Sélectionner",
+                df_annee["id"],
+                key="depense_edit_select"
+            )
+
             row = df_annee[df_annee["id"] == id_sel].iloc[0]
 
-            with st.form("edit_depense"):
-                date_dep = st.date_input("Date", row["date"].date())
-                compte = st.text_input("Compte", row["compte"])
-                poste = st.text_input("Poste", row["poste"])
-                fournisseur = st.text_input("Fournisseur", row["fournisseur"])
-                montant = st.number_input("Montant TTC (€)", value=float(row["montant_ttc"]))
+            with st.form("edit_depense_form"):
+                date_dep = st.date_input(
+                    "Date",
+                    row["date"].date(),
+                    key="edit_date"
+                )
+                compte = st.text_input(
+                    "Compte",
+                    row["compte"],
+                    key="edit_compte"
+                )
+                poste = st.text_input(
+                    "Poste",
+                    row["poste"],
+                    key="edit_poste"
+                )
+                fournisseur = st.text_input(
+                    "Fournisseur",
+                    row["fournisseur"],
+                    key="edit_fournisseur"
+                )
+                montant = st.number_input(
+                    "Montant TTC (€)",
+                    value=float(row["montant_ttc"]),
+                    key="edit_montant"
+                )
+
                 submit_edit = st.form_submit_button("✏️ Mettre à jour")
 
             if submit_edit:
@@ -146,8 +170,13 @@ def depenses_ui(supabase):
         if df_annee.empty:
             st.info("Aucune dépense à supprimer.")
         else:
-            id_del = st.selectbox("Sélectionner", df_annee["id"])
-            if st.button("🗑 Supprimer définitivement"):
+            id_del = st.selectbox(
+                "Sélectionner",
+                df_annee["id"],
+                key="depense_delete_select"
+            )
+
+            if st.button("🗑 Supprimer définitivement", key="delete_depense_btn"):
                 supabase.table("depenses").delete().eq("id", id_del).execute()
                 st.success("Dépense supprimée.")
                 st.rerun()
