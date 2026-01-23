@@ -9,26 +9,64 @@ def depenses_ui(supabase):
     # =========================
     # CHARGEMENT DES DONNÉES
     # =========================
-    rows = supabase.table("depenses").select("*").order("date", desc=True).execute().data
+    rows = (
+        supabase
+        .table("depenses")
+        .select("*")
+        .order("date", desc=True)
+        .execute()
+        .data
+    )
     df = pd.DataFrame(rows) if rows else pd.DataFrame()
 
-    # =========================
-    # SÉLECTEUR ANNÉE
-    # =========================
     if df.empty:
-        annees = [date.today().year]
-    else:
+        st.info("Aucune dépense enregistrée.")
+        return
+
+    # =========================
+    # FILTRES
+    # =========================
+    st.subheader("Filtres")
+
+    col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
+
+    with col_f1:
         annees = sorted(df["annee"].dropna().unique())
+        annee = st.selectbox("Année", annees, index=len(annees) - 1)
 
-    annee = st.selectbox("Année", annees, index=len(annees) - 1)
+    df_f = df[df["annee"] == annee]
 
-    df_annee = df[df["annee"] == annee] if not df.empty else pd.DataFrame()
+    with col_f2:
+        comptes = sorted(df_f["compte"].dropna().unique())
+        sel_comptes = st.multiselect("Compte", comptes, default=comptes)
+
+    with col_f3:
+        fournisseurs = sorted(df_f["fournisseur"].dropna().unique())
+        sel_fournisseurs = st.multiselect("Fournisseur", fournisseurs, default=fournisseurs)
+
+    with col_f4:
+        postes = sorted(df_f["poste"].dropna().unique())
+        sel_postes = st.multiselect("Poste", postes, default=postes)
+
+    with col_f5:
+        types = ["Charge", "Avoir", "Remboursement"]
+        sel_types = st.multiselect("Type", types, default=types)
+
+    # =========================
+    # APPLICATION DES FILTRES
+    # =========================
+    df_f = df_f[
+        df_f["compte"].isin(sel_comptes)
+        & df_f["fournisseur"].isin(sel_fournisseurs)
+        & df_f["poste"].isin(sel_postes)
+        & df_f["type"].fillna("Charge").isin(sel_types)
+    ]
 
     # =========================
     # KPI
     # =========================
-    total = df_annee["montant_ttc"].sum() if not df_annee.empty else 0
-    nb = len(df_annee)
+    total = df_f["montant_ttc"].sum()
+    nb = len(df_f)
     moy = total / nb if nb else 0
 
     c1, c2, c3 = st.columns(3)
@@ -47,10 +85,7 @@ def depenses_ui(supabase):
     # CONSULTER
     # =========================
     with tab_consulter:
-        if df_annee.empty:
-            st.info("Aucune dépense pour cette année.")
-        else:
-            st.dataframe(df_annee, use_container_width=True)
+        st.dataframe(df_f, use_container_width=True)
 
     # =========================
     # AJOUTER
@@ -100,28 +135,22 @@ def depenses_ui(supabase):
     # MODIFIER
     # =========================
     with tab_modifier:
-        if df_annee.empty:
+        if df_f.empty:
             st.info("Aucune dépense à modifier.")
         else:
-            ids = df_annee["id"].tolist()
             dep_id = st.selectbox(
                 "Sélectionner une dépense",
-                ids,
-                key="edit_depense"
+                df_f["id"],
+                key="edit_dep"
             )
 
-            dep = df_annee[df_annee["id"] == dep_id].iloc[0]
+            dep = df[df["id"] == dep_id].iloc[0]
 
-            # sécurisation du type (lignes anciennes)
             types = ["Charge", "Avoir", "Remboursement"]
             current_type = dep["type"] if dep.get("type") in types else "Charge"
 
             with st.form("edit_depense"):
-                new_date = st.date_input(
-                    "Date",
-                    value=pd.to_datetime(dep["date"])
-                )
-
+                new_date = st.date_input("Date", value=pd.to_datetime(dep["date"]))
                 new_compte = st.text_input("Compte", dep["compte"])
                 new_poste = st.text_input("Poste", dep["poste"])
                 new_fournisseur = st.text_input("Fournisseur", dep["fournisseur"])
@@ -165,13 +194,13 @@ def depenses_ui(supabase):
     # SUPPRIMER
     # =========================
     with tab_supprimer:
-        if df_annee.empty:
+        if df_f.empty:
             st.info("Aucune dépense à supprimer.")
         else:
             del_id = st.selectbox(
                 "Sélectionner une dépense",
-                df_annee["id"],
-                key="delete_depense"
+                df_f["id"],
+                key="delete_dep"
             )
 
             if st.button("🗑 Supprimer définitivement"):
