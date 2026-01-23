@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 
-
 # ============================
 # RÈGLE GROUPE DE COMPTE
 # ============================
@@ -28,30 +27,23 @@ def compute_budget_vs_reel(df_budget: pd.DataFrame, df_depenses: pd.DataFrame) -
     df_depenses["groupe"] = df_depenses["compte"].astype(str).apply(normalize_compte)
 
     budget_grp = (
-        df_budget
-        .groupby("groupe", as_index=False)["budget"]
-        .sum()
-        .rename(columns={"budget": "budget"})
+        df_budget.groupby("groupe", as_index=False)["budget"].sum()
     )
 
     depenses_grp = (
-        df_depenses
-        .groupby("groupe", as_index=False)["montant_ttc"]
-        .sum()
+        df_depenses.groupby("groupe", as_index=False)["montant_ttc"].sum()
         .rename(columns={"montant_ttc": "reel"})
     )
 
-    df = budget_grp.merge(depenses_grp, on="groupe", how="outer").fillna(0)
+    df = budget_grp.merge(depenses_grp, on="groupe", how="left").fillna(0)
 
     df["ecart_eur"] = df["budget"] - df["reel"]
     df["ecart_pct"] = df.apply(
-        lambda r: (r["ecart_eur"] / r["budget"] * 100) if r["budget"] != 0 else 0,
+        lambda r: (r["ecart_eur"] / r["budget"] * 100) if r["budget"] else 0,
         axis=1
     )
 
-    df = df.sort_values("groupe")
-
-    return df
+    return df.sort_values("groupe")
 
 
 # ============================
@@ -61,46 +53,25 @@ def budget_vs_reel_ui(supabase):
     st.title("📊 Budget vs Réel")
 
     # ----------------------------
-    # ANNÉE
+    # ANNÉES DISPONIBLES
     # ----------------------------
-    annees_budget = (
-        supabase.table("budgets")
-        .select("annee")
-        .execute()
-        .data
-    )
+    annees_budget = supabase.table("budgets").select("annee").execute().data
+    annees_dep = supabase.table("depenses").select("annee").execute().data
 
-    annees_depenses = (
-        supabase.table("depenses")
-        .select("annee")
-        .execute()
-        .data
-    )
-
-    annees = sorted(
-        set([a["annee"] for a in annees_budget] + [a["annee"] for a in annees_depenses])
-    )
+    annees = sorted({a["annee"] for a in annees_budget + annees_dep})
 
     if not annees:
-        st.warning("Aucune donnée budget ou dépense.")
+        st.warning("Aucune donnée disponible.")
         return
 
     annee = st.selectbox("Année", annees, index=len(annees) - 1)
 
     # ----------------------------
-    # DONNÉES
+    # BUDGETS (peu de lignes)
     # ----------------------------
     budgets = (
         supabase.table("budgets")
         .select("annee, groupe_compte, budget")
-        .eq("annee", annee)
-        .execute()
-        .data
-    )
-
-    depenses = (
-        supabase.table("depenses")
-        .select("annee, compte, montant_ttc")
         .eq("annee", annee)
         .execute()
         .data
@@ -111,15 +82,31 @@ def budget_vs_reel_ui(supabase):
         return
 
     df_budget = pd.DataFrame(budgets)
+
+    # ----------------------------
+    # DÉPENSES (⚠️ LIMITÉES)
+    # ----------------------------
+    depenses = (
+        supabase.table("depenses")
+        .select("annee, compte, montant_ttc")
+        .eq("annee", annee)
+        .range(0, 10000)  # ✅ OBLIGATOIRE
+        .execute()
+        .data
+    )
+
     df_depenses = pd.DataFrame(depenses)
 
-    df_comp = compute_budget_vs_reel(df_budget, df_depenses)
+    # ----------------------------
+    # CALCUL
+    # ----------------------------
+    df = compute_budget_vs_reel(df_budget, df_depenses)
 
     # ----------------------------
     # KPI
     # ----------------------------
-    total_budget = df_comp["budget"].sum()
-    total_reel = df_comp["reel"].sum()
+    total_budget = df["budget"].sum()
+    total_reel = df["reel"].sum()
     total_ecart = total_budget - total_reel
 
     c1, c2, c3 = st.columns(3)
@@ -130,18 +117,12 @@ def budget_vs_reel_ui(supabase):
     # ----------------------------
     # TABLEAU FINAL
     # ----------------------------
-    st.subheader("Comparaison par groupe de compte")
-
-    df_aff = df_comp.copy()
-    df_aff["budget"] = df_aff["budget"].round(2)
-    df_aff["reel"] = df_aff["reel"].round(2)
-    df_aff["ecart_eur"] = df_aff["ecart_eur"].round(2)
-    df_aff["ecart_pct"] = df_aff["ecart_pct"].round(1)
+    st.subheader("Comparaison Budget / Réel")
 
     st.dataframe(
-        df_aff.rename(
+        df.rename(
             columns={
-                "groupe": "Compte / Groupe",
+                "groupe": "Compte",
                 "budget": "Budget (€)",
                 "reel": "Réel (€)",
                 "ecart_eur": "Écart (€)",
