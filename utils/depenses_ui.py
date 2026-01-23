@@ -17,38 +17,49 @@ def depenses_ui(supabase):
         .execute()
         .data
     )
-    df = pd.DataFrame(rows) if rows else pd.DataFrame()
 
-    if df.empty:
+    if not rows:
         st.info("Aucune dépense enregistrée.")
         return
+
+    df = pd.DataFrame(rows)
+
+    # =========================
+    # NORMALISATION (CRITIQUE)
+    # =========================
+    df["annee"] = df["annee"].astype(int)
+    df["compte"] = df["compte"].fillna("").astype(str)
+    df["poste"] = df["poste"].fillna("—").astype(str)
+    df["fournisseur"] = df["fournisseur"].fillna("—").astype(str)
+    df["type"] = df["type"].fillna("Charge").astype(str)
+    df["montant_ttc"] = df["montant_ttc"].astype(float)
 
     # =========================
     # FILTRES
     # =========================
     st.subheader("Filtres")
 
-    col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
+    col1, col2, col3, col4, col5 = st.columns(5)
 
-    with col_f1:
-        annees = sorted(df["annee"].dropna().unique())
+    with col1:
+        annees = sorted(df["annee"].unique())
         annee = st.selectbox("Année", annees, index=len(annees) - 1)
 
-    df_f = df[df["annee"] == annee]
+    df_f = df[df["annee"] == annee].copy()
 
-    with col_f2:
-        comptes = sorted(df_f["compte"].dropna().unique())
+    with col2:
+        comptes = sorted(df_f["compte"].unique())
         sel_comptes = st.multiselect("Compte", comptes, default=comptes)
 
-    with col_f3:
-        fournisseurs = sorted(df_f["fournisseur"].dropna().unique())
+    with col3:
+        fournisseurs = sorted(df_f["fournisseur"].unique())
         sel_fournisseurs = st.multiselect("Fournisseur", fournisseurs, default=fournisseurs)
 
-    with col_f4:
-        postes = sorted(df_f["poste"].dropna().unique())
+    with col4:
+        postes = sorted(df_f["poste"].unique())
         sel_postes = st.multiselect("Poste", postes, default=postes)
 
-    with col_f5:
+    with col5:
         types = ["Charge", "Avoir", "Remboursement"]
         sel_types = st.multiselect("Type", types, default=types)
 
@@ -59,11 +70,11 @@ def depenses_ui(supabase):
         df_f["compte"].isin(sel_comptes)
         & df_f["fournisseur"].isin(sel_fournisseurs)
         & df_f["poste"].isin(sel_postes)
-        & df_f["type"].fillna("Charge").isin(sel_types)
+        & df_f["type"].isin(sel_types)
     ]
 
     # =========================
-    # KPI
+    # KPI (APRÈS FILTRES)
     # =========================
     total = df_f["montant_ttc"].sum()
     nb = len(df_f)
@@ -85,7 +96,10 @@ def depenses_ui(supabase):
     # CONSULTER
     # =========================
     with tab_consulter:
-        st.dataframe(df_f, use_container_width=True)
+        st.dataframe(
+            df_f.sort_values("date", ascending=False),
+            use_container_width=True
+        )
 
     # =========================
     # AJOUTER
@@ -117,7 +131,7 @@ def depenses_ui(supabase):
                 else abs(montant)
             )
 
-            payload = {
+            supabase.table("depenses").insert({
                 "annee": d.year,
                 "date": d.isoformat(),
                 "compte": compte,
@@ -125,9 +139,8 @@ def depenses_ui(supabase):
                 "fournisseur": fournisseur,
                 "montant_ttc": montant_final,
                 "type": type_depense,
-            }
+            }).execute()
 
-            supabase.table("depenses").insert(payload).execute()
             st.success("Dépense enregistrée")
             st.rerun()
 
@@ -146,9 +159,6 @@ def depenses_ui(supabase):
 
             dep = df[df["id"] == dep_id].iloc[0]
 
-            types = ["Charge", "Avoir", "Remboursement"]
-            current_type = dep["type"] if dep.get("type") in types else "Charge"
-
             with st.form("edit_depense"):
                 new_date = st.date_input("Date", value=pd.to_datetime(dep["date"]))
                 new_compte = st.text_input("Compte", dep["compte"])
@@ -157,15 +167,15 @@ def depenses_ui(supabase):
 
                 new_montant = st.number_input(
                     "Montant TTC (€)",
-                    value=abs(float(dep["montant_ttc"])),
+                    value=abs(dep["montant_ttc"]),
                     step=0.01,
                     format="%.2f"
                 )
 
                 new_type = st.selectbox(
                     "Type",
-                    types,
-                    index=types.index(current_type)
+                    ["Charge", "Avoir", "Remboursement"],
+                    index=["Charge", "Avoir", "Remboursement"].index(dep["type"])
                 )
 
                 save = st.form_submit_button("💾 Mettre à jour")
