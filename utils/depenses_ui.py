@@ -1,100 +1,63 @@
+from supabase import Client
 import streamlit as st
-import pandas as pd
+import uuid
 
 
-def depenses_ui(supabase):
-    st.header("📋 État des dépenses")
+def upload_facture(supabase: Client, file, annee, depense_id):
+    path = f"{annee}/{depense_id}.pdf"
 
-    # =========================
-    # Chargement données
-    # =========================
-    data = (
-        supabase.table("depenses")
-        .select("*")
-        .execute()
-        .data
+    supabase.storage.from_("factures").upload(
+        path,
+        file.getvalue(),
+        {"content-type": "application/pdf"},
+        upsert=True
     )
 
-    if not data:
-        st.warning("Aucune dépense enregistrée.")
-        return
+    public_url = supabase.storage.from_("factures").get_public_url(path)
+    return public_url
 
-    df = pd.DataFrame(data)
 
-    # Typage propre
-    df["annee"] = df["annee"].astype(int)
-    df["montant_ttc"] = df["montant_ttc"].astype(float)
+# =========================
+# ➕ Ajouter une dépense
+# =========================
+if onglet == "➕ Ajouter":
+    with st.form("add_depense"):
+        date = st.date_input("Date")
+        compte = st.text_input("Compte")
+        poste = st.text_input("Poste")
+        fournisseur = st.text_input("Fournisseur")
+        montant = st.number_input("Montant TTC (€)", step=0.01)
+        type_dep = st.selectbox("Type", ["Charge", "Avoir", "Remboursement"])
+        facture = st.file_uploader("Facture (PDF)", type=["pdf"])
 
-    # =========================
-    # Filtres
-    # =========================
-    with st.expander("Filtres", expanded=True):
-        col1, col2, col3 = st.columns(3)
+        submit = st.form_submit_button("Enregistrer")
 
-        with col1:
-            annee = st.selectbox(
-                "Année",
-                sorted(df["annee"].unique()),
-                index=0
+    if submit:
+        depense_id = str(uuid.uuid4())
+
+        payload = {
+            "id": depense_id,
+            "annee": date.year,
+            "date": str(date),
+            "compte": compte,
+            "poste": poste,
+            "fournisseur": fournisseur,
+            "montant_ttc": montant,
+            "type": type_dep,
+        }
+
+        supabase.table("depenses").insert(payload).execute()
+
+        if facture:
+            url = upload_facture(
+                supabase,
+                facture,
+                date.year,
+                depense_id
             )
 
-        with col2:
-            fournisseurs = st.multiselect(
-                "Fournisseur",
-                sorted(df["fournisseur"].dropna().unique())
-            )
+            supabase.table("depenses").update(
+                {"lien_facture": url}
+            ).eq("id", depense_id).execute()
 
-        with col3:
-            postes = st.multiselect(
-                "Poste",
-                sorted(df["poste"].dropna().unique())
-            )
-
-        types = st.multiselect(
-            "Type",
-            sorted(df["type"].dropna().unique())
-        )
-
-    # =========================
-    # Application des filtres
-    # =========================
-    df_f = df[df["annee"] == annee]
-
-    if fournisseurs:
-        df_f = df_f[df_f["fournisseur"].isin(fournisseurs)]
-
-    if postes:
-        df_f = df_f[df_f["poste"].isin(postes)]
-
-    if types:
-        df_f = df_f[df_f["type"].isin(types)]
-
-    # =========================
-    # KPI (APRÈS filtrage)
-    # =========================
-    total = df_f["montant_ttc"].sum()
-    nb = len(df_f)
-    moyenne = total / nb if nb > 0 else 0
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total dépenses (€)", f"{total:,.2f}")
-    col2.metric("Nombre de lignes", nb)
-    col3.metric("Dépense moyenne (€)", f"{moyenne:,.2f}")
-
-    # =========================
-    # Navigation
-    # =========================
-    onglet = st.radio(
-        "",
-        ["📊 Consulter", "➕ Ajouter", "✏️ Modifier", "🗑 Supprimer"],
-        horizontal=True
-    )
-
-    # =========================
-    # Consulter
-    # =========================
-    if onglet == "📊 Consulter":
-        st.dataframe(
-            df_f.sort_values("date", ascending=False),
-            use_container_width=True
-        )
+        st.success("Dépense enregistrée avec facture")
