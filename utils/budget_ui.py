@@ -1,163 +1,147 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from decimal import Decimal
 
-# -----------------------------
-# CONFIG MÉTIER
-# -----------------------------
-ANNEES_DISPONIBLES = [2023, 2024, 2025, 2026]
-
-# -----------------------------
+# =========================
 # DATA ACCESS
-# -----------------------------
-def load_budgets(supabase, annee: int) -> pd.DataFrame:
-    resp = (
-        supabase
-        .table("budgets")
-        .select("*")
-        .eq("annee", annee)
-        .order("compte")
-        .execute()
-    )
+# =========================
 
-    data = resp.data or []
-    return pd.DataFrame(data)
+def load_budgets(supabase):
+    res = supabase.table("budgets").select("*").execute()
+    return pd.DataFrame(res.data or [])
 
 
-# -----------------------------
-# UI PRINCIPALE
-# -----------------------------
+def budget_exists(df, annee, compte):
+    return not df[(df["annee"] == annee) & (df["compte"] == compte)].empty
+
+
+# =========================
+# UI
+# =========================
+
 def budget_ui(supabase):
+
     st.title("💰 Budget")
-    st.subheader("Pilotage des charges de l’immeuble")
+    df = load_budgets(supabase)
 
     # -------------------------
-    # Sélection année (LIBRE)
+    # Année
     # -------------------------
-    annee = st.selectbox(
-        "Année budgétaire",
-        ANNEES_DISPONIBLES,
-        index=ANNEES_DISPONIBLES.index(datetime.now().year)
-        if datetime.now().year in ANNEES_DISPONIBLES else 0
+    annees = sorted(df["annee"].unique().tolist()) if not df.empty else []
+    annee = st.selectbox("Année budgétaire", annees)
+
+    df_year = df[df["annee"] == annee] if annee else pd.DataFrame()
+
+    # -------------------------
+    # Onglets
+    # -------------------------
+    tab_consult, tab_add, tab_edit, tab_delete = st.tabs(
+        ["📊 Consulter", "➕ Ajouter", "✏️ Modifier", "🗑 Supprimer"]
     )
 
-    df = load_budgets(supabase, annee)
-
-    # -------------------------
-    # KPI (TOUJOURS AFFICHÉS)
-    # -------------------------
-    total_budget = float(df["budget"].sum()) if not df.empty else 0.0
-    nb_comptes = int(df["compte"].nunique()) if not df.empty else 0
-    budget_moyen = total_budget / nb_comptes if nb_comptes > 0 else 0.0
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Budget total (€)", f"{total_budget:,.2f}")
-    c2.metric("Nombre de comptes", nb_comptes)
-    c3.metric("Budget moyen (€)", f"{budget_moyen:,.2f}")
-
-    st.divider()
-
-    # -------------------------
-    # ONGLET CRUD
-    # -------------------------
-    tab_consulter, tab_ajouter, tab_modifier, tab_supprimer = st.tabs(
-        ["📊 Consulter", "➕ Ajouter", "✏️ Modifier", "🗑️ Supprimer"]
-    )
-
-    # ==========================================================
+    # =========================
     # CONSULTER
-    # ==========================================================
-    with tab_consulter:
-        if df.empty:
-            st.info("Aucun budget enregistré pour cette année.")
+    # =========================
+    with tab_consult:
+        if df_year.empty:
+            st.info("Aucun budget pour cette année.")
         else:
+            total = df_year["budget"].sum()
+            count = len(df_year)
+            avg = total / count if count else 0
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Budget total (€)", f"{total:,.2f}")
+            c2.metric("Nombre de comptes", count)
+            c3.metric("Budget moyen (€)", f"{avg:,.2f}")
+
             st.dataframe(
-                df[["annee", "compte", "budget", "groupe_compte"]],
-                use_container_width=True
+                df_year.sort_values("compte"),
+                use_container_width=True,
+                hide_index=True,
             )
 
-    # ==========================================================
+    # =========================
     # AJOUTER
-    # ==========================================================
-    with tab_ajouter:
+    # =========================
+    with tab_add:
         st.subheader("Ajouter un budget")
 
-        compte = st.text_input("Compte")
-        budget = st.number_input("Budget (€)", min_value=0.0, step=50.0)
-        groupe = st.text_input("Groupe de compte (optionnel)")
+        with st.form("add_budget_form", clear_on_submit=True):
+            compte = st.text_input("Compte")
+            budget = st.number_input("Budget (€)", min_value=0.0, step=100.0)
+            submitted = st.form_submit_button("Enregistrer")
 
-        if st.button("💾 Enregistrer le budget"):
-            if not compte:
-                st.error("Le compte est obligatoire.")
-            else:
-                supabase.table("budgets").insert({
-                    "annee": annee,
-                    "compte": compte,
-                    "budget": budget,
-                    "groupe_compte": groupe or compte
-                }).execute()
+            if submitted:
+                if not compte:
+                    st.error("Le compte est obligatoire.")
+                    return
 
-                st.success("Budget ajouté avec succès.")
+                if budget_exists(df, annee, compte):
+                    st.error(
+                        f"Le compte {compte} existe déjà pour l'année {annee}."
+                    )
+                    return
+
+                supabase.table("budgets").insert(
+                    {
+                        "annee": int(annee),
+                        "compte": compte,
+                        "budget": float(Decimal(budget)),
+                    }
+                ).execute()
+
+                st.success("Budget ajouté.")
                 st.rerun()
 
-    # ==========================================================
+    # =========================
     # MODIFIER
-    # ==========================================================
-    with tab_modifier:
+    # =========================
+    with tab_edit:
         st.subheader("Modifier un budget")
 
-        if df.empty:
-            st.warning("Aucun budget à modifier pour cette année.")
+        if df_year.empty:
+            st.info("Aucun budget à modifier.")
         else:
-            selection = st.selectbox(
-                "Sélectionner un compte",
-                df["compte"].tolist()
+            row = st.selectbox(
+                "Compte",
+                df_year.to_dict("records"),
+                format_func=lambda x: x["compte"],
             )
 
-            row = df[df["compte"] == selection].iloc[0]
+            with st.form("edit_budget_form"):
+                new_budget = st.number_input(
+                    "Nouveau budget (€)",
+                    min_value=0.0,
+                    value=float(row["budget"]),
+                    step=100.0,
+                )
+                submitted = st.form_submit_button("Mettre à jour")
 
-            new_budget = st.number_input(
-                "Nouveau budget (€)",
-                value=float(row["budget"]),
-                min_value=0.0,
-                step=50.0
-            )
+                if submitted:
+                    supabase.table("budgets").update(
+                        {"budget": float(Decimal(new_budget))}
+                    ).eq("id", row["id"]).execute()
 
-            new_groupe = st.text_input(
-                "Groupe de compte",
-                value=row.get("groupe_compte", "")
-            )
+                    st.success("Budget modifié.")
+                    st.rerun()
 
-            if st.button("✏️ Mettre à jour"):
-                supabase.table("budgets").update({
-                    "budget": new_budget,
-                    "groupe_compte": new_groupe
-                }).eq("id", row["id"]).execute()
-
-                st.success("Budget modifié.")
-                st.rerun()
-
-    # ==========================================================
+    # =========================
     # SUPPRIMER
-    # ==========================================================
-    with tab_supprimer:
+    # =========================
+    with tab_delete:
         st.subheader("Supprimer un budget")
 
-        if df.empty:
-            st.warning("Aucun budget à supprimer pour cette année.")
+        if df_year.empty:
+            st.info("Aucun budget à supprimer.")
         else:
-            selection = st.selectbox(
-                "Sélectionner un compte à supprimer",
-                df["compte"].tolist()
+            row = st.selectbox(
+                "Compte à supprimer",
+                df_year.to_dict("records"),
+                format_func=lambda x: x["compte"],
             )
 
-            row = df[df["compte"] == selection].iloc[0]
-
-            st.error(
-                f"Suppression définitive du budget du compte {selection} ({row['budget']} €)"
-            )
-
-            if st.button("🗑️ Confirmer la suppression"):
+            if st.button("Supprimer définitivement"):
                 supabase.table("budgets").delete().eq("id", row["id"]).execute()
                 st.success("Budget supprimé.")
                 st.rerun()
