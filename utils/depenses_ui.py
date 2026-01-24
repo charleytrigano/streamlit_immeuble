@@ -7,22 +7,23 @@ def depenses_ui(supabase):
     st.title("📋 État des dépenses")
 
     # =====================
-    # Sélection année
+    # Année
     # =====================
     annee = st.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
 
     # =====================
-    # Lecture des dépenses
+    # Lecture données
     # =====================
-    data = (
+    rows = (
         supabase.table("depenses")
         .select("*")
         .eq("annee", annee)
+        .order("date", desc=True)
         .execute()
         .data
     )
 
-    df = pd.DataFrame(data) if data else pd.DataFrame()
+    df = pd.DataFrame(rows) if rows else pd.DataFrame()
 
     # =====================
     # KPIs
@@ -31,15 +32,17 @@ def depenses_ui(supabase):
     count = len(df)
     moyenne = total / count if count else 0
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total dépenses (€)", f"{total:,.2f}")
-    col2.metric("Nombre de lignes", count)
-    col3.metric("Dépense moyenne (€)", f"{moyenne:,.2f}")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total dépenses (€)", f"{total:,.2f}")
+    c2.metric("Nombre de lignes", count)
+    c3.metric("Dépense moyenne (€)", f"{moyenne:,.2f}")
 
     # =====================
-    # Navigation
+    # Onglets
     # =====================
-    tab_consult, tab_add = st.tabs(["📊 Consulter", "➕ Ajouter"])
+    tab_consult, tab_add, tab_edit, tab_delete = st.tabs(
+        ["📊 Consulter", "➕ Ajouter", "✏️ Modifier", "🗑 Supprimer"]
+    )
 
     # =====================
     # CONSULTER
@@ -49,16 +52,18 @@ def depenses_ui(supabase):
             st.info("Aucune dépense")
         else:
             st.dataframe(
-                df[[
-                    "date",
-                    "compte",
-                    "poste",
-                    "fournisseur",
-                    "montant_ttc",
-                    "type",
-                    "pdf_url"
-                ]],
-                use_container_width=True
+                df[
+                    [
+                        "date",
+                        "compte",
+                        "poste",
+                        "fournisseur",
+                        "montant_ttc",
+                        "type",
+                        "pdf_url",
+                    ]
+                ],
+                use_container_width=True,
             )
 
     # =====================
@@ -75,37 +80,118 @@ def depenses_ui(supabase):
             montant = st.number_input("Montant TTC (€)", step=0.01)
             type_dep = st.selectbox("Type", ["Charge", "Remboursement", "Avoir"])
             pdf = st.file_uploader("Facture PDF", type=["pdf"])
-            commentaire = st.text_area("Commentaire (optionnel)")
+            commentaire = st.text_area("Commentaire")
 
-            submitted = st.form_submit_button("Enregistrer")
+            submit = st.form_submit_button("Enregistrer")
 
-        if submitted:
+        if submit:
             depense_id = str(uuid.uuid4())
-
             pdf_url = None
 
             if pdf:
                 path = f"{annee}/{depense_id}.pdf"
                 supabase.storage.from_("factures").upload(
-                    path,
-                    pdf,
-                    {"content-type": "application/pdf"}
+                    path, pdf, {"content-type": "application/pdf"}
                 )
                 pdf_url = supabase.storage.from_("factures").get_public_url(path)
 
-            payload = {
-                "id": depense_id,
-                "annee": annee,
-                "date": str(d_date),
-                "compte": compte,
-                "poste": poste,
-                "fournisseur": fournisseur,
-                "montant_ttc": montant,
-                "type": type_dep,
-                "pdf_url": pdf_url,
-                "commentaire": commentaire
-            }
+            supabase.table("depenses").insert(
+                {
+                    "id": depense_id,
+                    "annee": annee,
+                    "date": str(d_date),
+                    "compte": compte,
+                    "poste": poste,
+                    "fournisseur": fournisseur,
+                    "montant_ttc": montant,
+                    "type": type_dep,
+                    "pdf_url": pdf_url,
+                    "commentaire": commentaire,
+                }
+            ).execute()
 
-            supabase.table("depenses").insert(payload).execute()
-            st.success("Dépense enregistrée avec facture liée")
+            st.success("Dépense ajoutée")
             st.rerun()
+
+    # =====================
+    # MODIFIER
+    # =====================
+    with tab_edit:
+        if df.empty:
+            st.info("Aucune dépense à modifier")
+        else:
+            dep_id = st.selectbox(
+                "Sélectionner une dépense",
+                df["id"],
+                format_func=lambda x: f"{x} | {df[df['id']==x]['fournisseur'].iloc[0]}",
+            )
+
+            dep = df[df["id"] == dep_id].iloc[0]
+
+            with st.form("edit_depense"):
+                d_date = st.date_input("Date", value=pd.to_datetime(dep["date"]))
+                compte = st.text_input("Compte", dep["compte"])
+                poste = st.text_input("Poste", dep["poste"])
+                fournisseur = st.text_input("Fournisseur", dep["fournisseur"])
+                montant = st.number_input(
+                    "Montant TTC (€)", value=float(dep["montant_ttc"]), step=0.01
+                )
+                type_dep = st.selectbox(
+                    "Type", ["Charge", "Remboursement", "Avoir"],
+                    index=["Charge", "Remboursement", "Avoir"].index(dep["type"])
+                )
+                pdf = st.file_uploader("Remplacer la facture (optionnel)", type=["pdf"])
+                commentaire = st.text_area("Commentaire", dep["commentaire"] or "")
+
+                submit_edit = st.form_submit_button("Mettre à jour")
+
+            if submit_edit:
+                pdf_url = dep["pdf_url"]
+
+                if pdf:
+                    path = f"{annee}/{dep_id}.pdf"
+                    supabase.storage.from_("factures").upload(
+                        path,
+                        pdf,
+                        {"content-type": "application/pdf"},
+                        upsert=True,
+                    )
+                    pdf_url = supabase.storage.from_("factures").get_public_url(path)
+
+                supabase.table("depenses").update(
+                    {
+                        "date": str(d_date),
+                        "compte": compte,
+                        "poste": poste,
+                        "fournisseur": fournisseur,
+                        "montant_ttc": montant,
+                        "type": type_dep,
+                        "pdf_url": pdf_url,
+                        "commentaire": commentaire,
+                    }
+                ).eq("id", dep_id).execute()
+
+                st.success("Dépense mise à jour")
+                st.rerun()
+
+    # =====================
+    # SUPPRIMER
+    # =====================
+    with tab_delete:
+        if df.empty:
+            st.info("Aucune dépense à supprimer")
+        else:
+            dep_id = st.selectbox(
+                "Sélectionner une dépense à supprimer",
+                df["id"],
+                key="delete_id",
+            )
+
+            if st.button("❌ Supprimer définitivement"):
+                # suppression PDF
+                supabase.storage.from_("factures").remove([f"{annee}/{dep_id}.pdf"])
+                # suppression DB
+                supabase.table("depenses").delete().eq("id", dep_id).execute()
+
+                st.success("Dépense supprimée")
+                st.rerun()
