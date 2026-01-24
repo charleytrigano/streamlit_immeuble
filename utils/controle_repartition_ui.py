@@ -66,7 +66,7 @@ def controle_repartition_ui(supabase):
             montant_ttc=("montant_ttc", "first"),
             montant_reparti=("montant_reparti", "sum")
         )
-    )
+    
 
     df_sum["ecart"] = df_sum["montant_ttc"] - df_sum["montant_reparti"]
 
