@@ -19,7 +19,7 @@ def budget_vs_reel_ui(supabase):
     # -----------------------------
     budget_resp = (
         supabase
-        .table("budget")
+        .table("budgets")  # ✅ CORRECTION ICI
         .select("annee, compte, groupe_compte, budget")
         .eq("annee", annee)
         .execute()
