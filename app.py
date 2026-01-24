@@ -1,53 +1,57 @@
 import streamlit as st
 
-# =========================
-# CONFIG
-# =========================
+# ======================================================
+# CONFIG STREAMLIT
+# ======================================================
 st.set_page_config(
     page_title="Pilotage des charges de l’immeuble",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-# =========================
+st.title("🏢 Pilotage des charges de l’immeuble")
+
+# ======================================================
 # SUPABASE
-# =========================
+# ======================================================
 from utils.supabase_client import get_supabase
+
 supabase = get_supabase()
 
-# =========================
-# UI IMPORTS
-# =========================
-from utils.budget_ui import budget_ui
+# ======================================================
+# IMPORT UI
+# ======================================================
 from utils.depenses_ui import depenses_ui
+from utils.budget_ui import budget_ui
 from utils.budget_vs_reel_ui import budget_vs_reel_ui
-
 from utils.statistiques_ui import statistiques_ui
 
-# =========================
-# SIDEBAR
-# =========================
+# ======================================================
+# SIDEBAR — NAVIGATION
+# ======================================================
 st.sidebar.title("Navigation")
 
-page = st.sidebar.radio(
+menu = st.sidebar.radio(
     "Aller à",
     [
         "📋 État des dépenses",
         "💰 Budget",
         "📊 Budget vs Réel",
-    ]
+        "📈 Statistiques",
+    ],
 )
 
-# =========================
+# ======================================================
 # ROUTAGE
-# =========================
-if page == "📋 État des dépenses":
+# ======================================================
+if menu == "📋 État des dépenses":
     depenses_ui(supabase)
 
-elif page == "💰 Budget":
+elif menu == "💰 Budget":
     budget_ui(supabase)
 
-elif page == "📊 Budget vs Réel":
+elif menu == "📊 Budget vs Réel":
     budget_vs_reel_ui(supabase)
 
-elif menu == "Statistiques":
+elif menu == "📈 Statistiques":
     statistiques_ui(supabase)
