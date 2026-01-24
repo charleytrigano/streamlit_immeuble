@@ -26,6 +26,8 @@ from utils.budget_ui import budget_ui
 from utils.budget_vs_reel_ui import budget_vs_reel_ui
 from utils.statistiques_ui import statistiques_ui
 
+from utils.repartition_lots_ui import repartition_lots_ui
+
 # ======================================================
 # SIDEBAR — NAVIGATION
 # ======================================================
