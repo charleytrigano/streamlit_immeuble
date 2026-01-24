@@ -2,55 +2,28 @@ import streamlit as st
 import pandas as pd
 
 
+COMPTES_4_CHIFFRES = {"6211", "6213", "6222", "6223"}
+
+
+def cle_budget(compte: str) -> str:
+    compte = str(compte)
+    if compte[:4] in COMPTES_4_CHIFFRES:
+        return compte[:4]
+    return compte[:3]
+
+
 def budget_vs_reel_ui(supabase):
-    st.header("📊 Budget vs Réel")
+    st.title("📊 Budget vs Réel")
 
-    # =========================
-    # Sélection année
-    # =========================
-    annees = (
-        supabase.table("budgets")
-        .select("annee")
-        .execute()
-        .data
-    )
+    # =====================
+    # Année
+    # =====================
+    annee = st.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
 
-    annees = sorted({a["annee"] for a in annees})
-
-    if not annees:
-        st.warning("Aucune année budgétaire disponible.")
-        return
-
-    annee = st.selectbox("Année", annees)
-
-    # =========================
-    # Chargement budgets
-    # =========================
-    df_budget = (
-        supabase.table("budgets")
-        .select("annee, compte, budget")
-        .eq("annee", annee)
-        .execute()
-        .data
-    )
-
-    df_budget = pd.DataFrame(df_budget)
-
-    if df_budget.empty:
-        st.warning("Aucun budget pour cette année.")
-        return
-
-    df_budget["groupe"] = df_budget["compte"].astype(str).str[:3]
-    df_budget = (
-        df_budget
-        .groupby("groupe", as_index=False)["budget"]
-        .sum()
-    )
-
-    # =========================
-    # Chargement dépenses
-    # =========================
-    df_dep = (
+    # =====================
+    # Chargement données
+    # =====================
+    dep_rows = (
         supabase.table("depenses")
         .select("annee, compte, montant_ttc")
         .eq("annee", annee)
@@ -58,58 +31,92 @@ def budget_vs_reel_ui(supabase):
         .data
     )
 
-    df_dep = pd.DataFrame(df_dep)
-
-    if df_dep.empty:
-        df_dep = pd.DataFrame(columns=["groupe", "reel"])
-
-    else:
-        df_dep["compte"] = df_dep["compte"].astype(str)
-
-        df_dep["groupe"] = df_dep["compte"].apply(
-            lambda x: x[:3] if len(x) >= 4 else x
-        )
-
-        df_dep = (
-            df_dep
-            .groupby("groupe", as_index=False)["montant_ttc"]
-            .sum()
-            .rename(columns={"montant_ttc": "reel"})
-        )
-
-    # =========================
-    # Fusion Budget / Réel
-    # =========================
-    df = pd.merge(
-        df_budget,
-        df_dep,
-        on="groupe",
-        how="left"
+    bud_rows = (
+        supabase.table("budget")
+        .select("annee, compte, budget")
+        .eq("annee", annee)
+        .execute()
+        .data
     )
 
-    df["reel"] = df["reel"].fillna(0)
-    df["ecart"] = df["budget"] - df["reel"]
-    df["ecart_pct"] = df.apply(
-        lambda r: (r["ecart"] / r["budget"] * 100)
-        if r["budget"] != 0 else None,
-        axis=1
+    if not dep_rows or not bud_rows:
+        st.warning("Données budget ou dépenses manquantes pour cette année")
+        return
+
+    df_dep = pd.DataFrame(dep_rows)
+    df_bud = pd.DataFrame(bud_rows)
+
+    # =====================
+    # Normalisation clés
+    # =====================
+    df_dep["cle"] = df_dep["compte"].apply(cle_budget)
+    df_bud["cle"] = df_bud["compte"].apply(cle_budget)
+
+    # =====================
+    # Agrégation
+    # =====================
+    dep_agg = (
+        df_dep.groupby("cle", as_index=False)["montant_ttc"]
+        .sum()
+        .rename(columns={"montant_ttc": "reel"})
     )
 
-    df = df.rename(columns={"groupe": "compte"})
+    bud_agg = (
+        df_bud.groupby("cle", as_index=False)["budget"]
+        .sum()
+    )
 
-    # =========================
-    # KPI
-    # =========================
-    col1, col2, col3 = st.columns(3)
+    # =====================
+    # Jointure
+    # =====================
+    comp = bud_agg.merge(dep_agg, on="cle", how="left")
+    comp["reel"] = comp["reel"].fillna(0)
 
-    col1.metric("Budget total (€)", f"{df['budget'].sum():,.2f}")
-    col2.metric("Réel total (€)", f"{df['reel'].sum():,.2f}")
-    col3.metric("Écart global (€)", f"{df['ecart'].sum():,.2f}")
+    comp["ecart_eur"] = comp["reel"] - comp["budget"]
+    comp["ecart_pct"] = comp.apply(
+        lambda r: (r["ecart_eur"] / r["budget"] * 100)
+        if r["budget"] != 0 else 0,
+        axis=1,
+    )
 
-    # =========================
-    # Tableau final
-    # =========================
+    # =====================
+    # KPIs
+    # =====================
+    total_budget = comp["budget"].sum()
+    total_reel = comp["reel"].sum()
+    total_ecart = total_reel - total_budget
+    taux = (total_ecart / total_budget * 100) if total_budget else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Budget (€)", f"{total_budget:,.2f}")
+    c2.metric("Réel (€)", f"{total_reel:,.2f}")
+    c3.metric("Écart (€)", f"{total_ecart:,.2f}")
+    c4.metric("Écart (%)", f"{taux:.1f} %")
+
+    # =====================
+    # Tableau
+    # =====================
     st.dataframe(
-        df[["compte", "budget", "reel", "ecart", "ecart_pct"]],
-        use_container_width=True
+        comp.sort_values("cle"),
+        use_container_width=True,
     )
+
+    # =====================
+    # Drill-down
+    # =====================
+    st.subheader("🔎 Détail par compte")
+
+    cle_sel = st.selectbox(
+        "Groupe de compte",
+        comp["cle"].sort_values(),
+    )
+
+    df_detail = df_dep[df_dep["cle"] == cle_sel]
+
+    if df_detail.empty:
+        st.info("Aucune dépense pour ce groupe")
+    else:
+        st.dataframe(
+            df_detail[["compte", "montant_ttc"]],
+            use_container_width=True,
+        )
