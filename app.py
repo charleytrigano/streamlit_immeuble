@@ -21,6 +21,8 @@ from utils.budget_ui import budget_ui
 from utils.depenses_ui import depenses_ui
 from utils.budget_vs_reel_ui import budget_vs_reel_ui
 
+from utils.statistiques_ui import statistiques_ui
+
 # =========================
 # SIDEBAR
 # =========================
@@ -46,3 +48,6 @@ elif page == "💰 Budget":
 
 elif page == "📊 Budget vs Réel":
     budget_vs_reel_ui(supabase)
+
+elif menu == "Statistiques":
+    statistiques_ui(supabase)
