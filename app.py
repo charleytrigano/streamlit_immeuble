@@ -150,7 +150,7 @@ def main():
     # CHARGES RÉELLES (TANTIÈMES)
     # =========================
     df["charges_reelles"] = (
-        df["montant_ttc"] * df["quote_part"] / BASE_TANTIEMES
+        df["montant_ttc"] * df["quote_part"] 
     )
 
     charges_lot = (
