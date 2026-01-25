@@ -8,7 +8,7 @@ from supabase import create_client
 BASE_TANTIEMES = 10_000
 
 st.set_page_config(
-    page_title="Pilotage des charges",
+    page_title="Pilotage des charges de l’immeuble",
     layout="wide"
 )
 
@@ -21,6 +21,9 @@ def get_supabase():
     key = st.secrets["SUPABASE_ANON_KEY"]
     return create_client(url, key)
 
+# =========================
+# FORMAT €
+# =========================
 def eur(x):
     return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
@@ -31,7 +34,7 @@ def main():
     supabase = get_supabase()
 
     # =========================
-    # SIDEBAR — FILTRES
+    # SIDEBAR – FILTRES
     # =========================
     st.sidebar.title("Filtres")
 
@@ -55,7 +58,7 @@ def main():
 
     lot_filtre = st.sidebar.selectbox(
         "Lot",
-        ["Tous"] + sorted(df_lots["lot"].tolist())
+        ["Tous"] + sorted(df_lots["lot"].unique())
     )
 
     # =========================
@@ -68,6 +71,7 @@ def main():
         .eq("annee", annee)
         .execute()
     )
+
     df_dep = pd.DataFrame(dep_resp.data)
 
     if df_dep.empty:
@@ -78,14 +82,11 @@ def main():
 
     compte_filtre = st.sidebar.selectbox(
         "Compte",
-        ["Tous"] + sorted(df_dep["compte"].unique().tolist())
+        ["Tous"] + sorted(df_dep["compte"].dropna().unique())
     )
 
-    if compte_filtre != "Tous":
-        df_dep = df_dep[df_dep["compte"] == compte_filtre]
-
     # =========================
-    # RÉPARTITIONS
+    # RÉPARTITION
     # =========================
     rep_resp = (
         supabase
@@ -93,24 +94,33 @@ def main():
         .select("depense_id, lot_id, quote_part")
         .execute()
     )
+
     df_rep = pd.DataFrame(rep_resp.data)
 
+    if df_rep.empty:
+        st.error("Aucune répartition trouvée.")
+        return
+
+    df_rep["quote_part"] = pd.to_numeric(df_rep["quote_part"], errors="coerce").fillna(0)
+
     # =========================
-    # CALCUL CHARGES RÉELLES
+    # CALCUL CHARGES RÉELLES ✅
     # =========================
     df = (
-        df_dep
-        .merge(df_rep, left_on="id", right_on="depense_id", how="left")
+        df_rep
+        .merge(df_dep, left_on="depense_id", right_on="id", how="left")
         .merge(df_lots, left_on="lot_id", right_on="id", how="left", suffixes=("", "_lot"))
     )
+
+    if compte_filtre != "Tous":
+        df = df[df["compte"] == compte_filtre]
 
     if lot_filtre != "Tous":
         df = df[df["lot"] == lot_filtre]
 
-    # règle métier : pas de répartition => 0 réparti
-    df["quote_part"] = df["quote_part"].fillna(0)
-
-    df["charges_reelles"] = df["montant_ttc"] * df["quote_part"] / BASE_TANTIEMES
+    # 🔴 ICI LA CORRECTION MAJEURE
+    # quote_part est DÉJÀ une fraction (ex 0.0245)
+    df["charges_reelles"] = df["montant_ttc"] * df["quote_part"]
 
     charges_reelles = (
         df
@@ -124,14 +134,16 @@ def main():
     budget_resp = (
         supabase
         .table("budgets")
-        .select("budget")
+        .select("montant")
         .eq("annee", annee)
         .execute()
     )
 
-    total_budget = sum(b["budget"] for b in budget_resp.data) if budget_resp.data else 0
+    total_budget = sum(b["montant"] for b in budget_resp.data) if budget_resp.data else 0
 
-    df_lots["appel_fonds"] = total_budget * df_lots["tantiemes"] / BASE_TANTIEMES
+    df_lots["appel_fonds"] = (
+        total_budget * df_lots["tantiemes"] / BASE_TANTIEMES
+    )
 
     if lot_filtre != "Tous":
         df_lots = df_lots[df_lots["lot"] == lot_filtre]
@@ -152,15 +164,15 @@ def main():
     # =========================
     st.title("🏢 Pilotage des charges de l’immeuble")
     st.subheader("Charges par lot — Réel vs Appels de fonds")
-    st.caption("Répartition basée sur 10 000 tantièmes")
 
     col1, col2, col3 = st.columns(3)
 
-    col1.metric("Charges réelles", eur(final["charges_reelles"].sum()))
-    col2.metric("Appels de fonds", eur(final["appel_fonds"].sum()))
-    col3.metric("Régularisation", eur(final["ecart"].sum()))
+    col1.metric("Charges réelles totales", eur(final["charges_reelles"].sum()))
+    col2.metric("Appels de fonds totaux", eur(final["appel_fonds"].sum()))
+    col3.metric("Régularisation globale", eur(final["ecart"].sum()))
 
-    st.markdown("### 📋 Détail par lot")
+    st.markdown("### 📋 Régularisation par lot")
+    st.caption("Répartition basée sur quote-part (fraction)")
 
     st.dataframe(
         final.rename(columns={
