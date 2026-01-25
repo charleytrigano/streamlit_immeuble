@@ -16,7 +16,7 @@ def euro(x):
 @st.cache_resource
 def get_supabase():
     url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_SERVICE_KEY"]
+    key = st.secrets["SUPABASE_ANON_KEY"]
     return create_client(url, key)
 
 # =========================
