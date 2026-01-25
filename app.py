@@ -124,12 +124,12 @@ def main():
     budget_resp = (
         supabase
         .table("budgets")
-        .select("montant")
+        .select("budget")
         .eq("annee", annee)
         .execute()
     )
 
-    total_budget = sum(b["montant"] for b in budget_resp.data) if budget_resp.data else 0
+    total_budget = sum(b["budget"] for b in budget_resp.data) if budget_resp.data else 0
 
     df_lots["appel_fonds"] = total_budget * df_lots["tantiemes"] / BASE_TANTIEMES
 
