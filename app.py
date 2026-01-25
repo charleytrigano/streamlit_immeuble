@@ -158,6 +158,15 @@ def main():
         budget_total * df_lots["tantiemes"] / BASE_TANTIEMES
     )
 
+
+rep_resp = (
+    supabase
+    .table("repartition_depenses")
+    .select("...")
+    .eq("...", ...)
+    .execute()
+)
+
     # =========================
     # FINAL
     # =========================
