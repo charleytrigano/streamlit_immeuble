@@ -17,17 +17,10 @@ st.set_page_config(
 # =========================
 @st.cache_resource
 def get_supabase():
-    return create_client(
-        st.secrets["SUPABASE_URL"],
-        st.secrets["SUPABASE_ANON_KEY"]
-    )
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_ANON_KEY"]
+    return create_client(url, key)
 
-def euro(val):
-    try:
-        v = float(val)
-    except Exception:
-        v = 0.0
-    return f"{v:,.2f} €".replace(",", " ").replace(".", ",")
 
 # =========================
 # MAIN
@@ -49,84 +42,72 @@ def main():
     # =========================
     # LOTS
     # =========================
-    try:
-        lots_resp = (
-            supabase
-            .table("lots")
-            .select("id, lot, tantiemes")
-            .execute()
-        )
-    except Exception as e:
-        st.error(f"Erreur Supabase (lots) : {e}")
-        return
+    lots_resp = (
+        supabase
+        .table("lots")
+        .select("id, lot, tantiemes")
+        .execute()
+    )
 
     df_lots = pd.DataFrame(lots_resp.data)
 
     if df_lots.empty:
-        st.error("Aucun lot trouvé")
+        st.error("Aucun lot trouvé dans la table lots.")
         return
 
     df_lots["lot"] = df_lots["lot"].astype(str)
-    df_lots["tantiemes"] = pd.to_numeric(df_lots["tantiemes"], errors="coerce").fillna(0)
+    df_lots["tantiemes"] = df_lots["tantiemes"].astype(float)
 
     lot_filtre = st.sidebar.selectbox(
         "Lot",
-        ["Tous"] + sorted(df_lots["lot"].unique().tolist())
+        ["Tous"] + sorted(df_lots["lot"].unique())
     )
 
     # =========================
     # DÉPENSES
     # =========================
-    try:
-        dep_resp = (
-            supabase
-            .table("depenses")
-            .select("id, montant_ttc, compte, annee")
-            .eq("annee", annee)
-            .execute()
-        )
-    except Exception as e:
-        st.error(f"Erreur Supabase (depenses) : {e}")
-        return
+    dep_resp = (
+        supabase
+        .table("depenses")
+        .select("id, montant_ttc, compte, annee")
+        .eq("annee", annee)
+        .execute()
+    )
 
     df_dep = pd.DataFrame(dep_resp.data)
 
     if df_dep.empty:
-        st.warning("Aucune dépense pour cette année")
+        st.warning("Aucune dépense pour cette année.")
         return
 
-    df_dep["montant_ttc"] = pd.to_numeric(df_dep["montant_ttc"], errors="coerce").fillna(0)
-    df_dep["compte"] = df_dep["compte"].astype(str).fillna("Non renseigné")
+    df_dep["montant_ttc"] = df_dep["montant_ttc"].astype(float)
+    df_dep["compte"] = df_dep["compte"].fillna("Non renseigné").astype(str)
 
     compte_filtre = st.sidebar.selectbox(
         "Compte",
-        ["Tous"] + sorted(df_dep["compte"].unique().tolist())
+        ["Tous"] + sorted(df_dep["compte"].unique())
     )
 
     # =========================
     # RÉPARTITION DES DÉPENSES
     # =========================
-    try:
-        rep_resp = (
-            supabase
-            .table("repartition_depenses")
-            .select("depense_id, lot_id, quote_part")
-            .execute()
-        )
-    except Exception as e:
-        st.error(f"Erreur Supabase (repartition_depenses) : {e}")
-        return
+    rep_resp = (
+        supabase
+        .table("repartition_depenses")
+        .select("depense_id, lot_id, quote_part")
+        .execute()
+    )
 
     df_rep = pd.DataFrame(rep_resp.data)
 
     if df_rep.empty:
-        st.error("Aucune répartition trouvée")
+        st.error("Aucune répartition trouvée dans repartition_depenses.")
         return
 
-    df_rep["quote_part"] = pd.to_numeric(df_rep["quote_part"], errors="coerce").fillna(0)
+    df_rep["quote_part"] = df_rep["quote_part"].astype(float)
 
     # =========================
-    # MERGE GLOBAL
+    # MERGE GLOBAL (répartition + dépenses + lots)
     # =========================
     df = (
         df_rep
@@ -140,19 +121,40 @@ def main():
         )
     )
 
+    # Si certaines lignes n'ont pas trouvé la dépense ou le lot, on les ignore
+    df = df.dropna(subset=["montant_ttc", "lot"])
+
+    # =========================
+    # NORMALISATION DES QUOTE-PARTS
+    # (on force somme = 1 par dépense)
+    # =========================
+    total_quote_par_depense = df.groupby("depense_id")["quote_part"].transform("sum")
+    # éviter la division par zéro
+    total_quote_par_depense = total_quote_par_depense.replace(0, 1)
+
+    df["quote_norm"] = df["quote_part"] / total_quote_par_depense
+
+    # =========================
+    # CALCUL CHARGES RÉELLES
+    # =========================
+    df["charges_reelles"] = df["montant_ttc"] * df["quote_norm"]
+
+    # =========================
+    # APPLICATION DES FILTRES
+    # =========================
     if compte_filtre != "Tous":
         df = df[df["compte"] == compte_filtre]
 
     if lot_filtre != "Tous":
         df = df[df["lot"] == lot_filtre]
 
-    # =========================
-    # CHARGES RÉELLES (TANTIÈMES)
-    # =========================
-    df["charges_reelles"] = (
-        df["montant_ttc"] * df["quote_part"] 
-    )
+    if df.empty:
+        st.warning("Aucune ligne après application des filtres.")
+        return
 
+    # =========================
+    # AGRÉGATION PAR LOT
+    # =========================
     charges_lot = (
         df
         .groupby("lot", as_index=False)
@@ -162,39 +164,34 @@ def main():
     # =========================
     # BUDGET / APPELS DE FONDS
     # =========================
-    try:
-        budget_resp = (
-            supabase
-            .table("budgets")
-            .select("annee, budget")
-            .eq("annee", annee)
-            .execute()
-        )
-    except Exception as e:
-        st.error(f"Erreur Supabase (budgets) : {e}")
-        budget_resp = None
-
-    if budget_resp and budget_resp.data:
-        budget_total = sum(
-            pd.to_numeric(b.get("montant", 0), errors="coerce")
-            for b in budget_resp.data
-        )
-    else:
-        budget_total = 0
-
-    df_lots_calc = df_lots.copy()
-    df_lots_calc["appel_fonds"] = (
-        budget_total * df_lots_calc["tantiemes"] / BASE_TANTIEMES
+    budgets_resp = (
+        supabase
+        .table("budgets")
+        .select("annee, budget")
+        .eq("annee", annee)
+        .execute()
     )
 
+    df_budgets = pd.DataFrame(budgets_resp.data)
+
+    if not df_budgets.empty and "budget" in df_budgets.columns:
+        budget_total = df_budgets["budget"].astype(float).sum()
+    else:
+        budget_total = 0.0
+
+    df_lots["appel_fonds"] = budget_total * df_lots["tantiemes"] / BASE_TANTIEMES
+
+    # on applique le filtre de lot sur les appels de fonds
     if lot_filtre != "Tous":
-        df_lots_calc = df_lots_calc[df_lots_calc["lot"] == lot_filtre]
+        df_lots_filtered = df_lots[df_lots["lot"] == lot_filtre].copy()
+    else:
+        df_lots_filtered = df_lots.copy()
 
     # =========================
-    # FINAL PAR LOT
+    # TABLEAU FINAL PAR LOT
     # =========================
     final = (
-        df_lots_calc[["lot", "appel_fonds"]]
+        df_lots_filtered[["lot", "appel_fonds"]]
         .merge(charges_lot, on="lot", how="left")
         .fillna(0)
     )
@@ -202,43 +199,48 @@ def main():
     final["ecart"] = final["charges_reelles"] - final["appel_fonds"]
 
     # =========================
-    # UI – KPI
+    # KPI
     # =========================
     st.title("🏢 Pilotage des charges de l’immeuble")
     st.subheader("Charges par lot — Réel vs Appels de fonds")
+
+    total_charges_reelles = final["charges_reelles"].sum()
+    total_appels = final["appel_fonds"].sum()
+    total_ecart = final["ecart"].sum()
 
     col1, col2, col3 = st.columns(3)
 
     col1.metric(
         "Charges réelles totales",
-        euro(final["charges_reelles"].sum())
+        f"{total_charges_reelles:,.2f} €".replace(",", " ").replace(".", ",")
     )
     col2.metric(
         "Appels de fonds totaux",
-        euro(final["appel_fonds"].sum())
+        f"{total_appels:,.2f} €".replace(",", " ").replace(".", ",")
     )
     col3.metric(
         "Régularisation globale",
-        euro(final["ecart"].sum())
+        f"{total_ecart:,.2f} €".replace(",", " ").replace(".", ",")
     )
 
     # =========================
-    # TABLEAU PAR LOT
+    # RÉGULARISATION PAR LOT
     # =========================
     st.markdown("### 📋 Régularisation par lot")
+    st.caption("Répartition basée sur les quote-parts (somme = 1 par dépense).")
 
     st.dataframe(
         final.rename(columns={
             "lot": "Lot",
-            "charges_reelles": "Charges réelles (€)",
             "appel_fonds": "Appels de fonds (€)",
+            "charges_reelles": "Charges réelles (€)",
             "ecart": "Écart (€)"
         }),
         use_container_width=True
     )
 
     # =========================
-    # DÉTAIL PAR COMPTE
+    # DÉTAIL DES DÉPENSES PAR COMPTE
     # =========================
     st.markdown("### 📊 Détail des dépenses par compte")
 
@@ -252,17 +254,15 @@ def main():
         .sort_values("charges_reelles", ascending=False)
     )
 
-    dep_compte["montant_total_fmt"] = dep_compte["montant_total"].apply(euro)
-    dep_compte["charges_reelles_fmt"] = dep_compte["charges_reelles"].apply(euro)
-
     st.dataframe(
         dep_compte.rename(columns={
             "compte": "Compte",
-            "montant_total_fmt": "Montant facturé (€)",
-            "charges_reelles_fmt": "Charges réparties (€)"
-        })[["Compte", "Montant facturé (€)", "Charges réparties (€)"]],
+            "montant_total": "Montant total facturé (€)",
+            "charges_reelles": "Charges réelles réparties (€)"
+        }),
         use_container_width=True
     )
+
 
 # =========================
 # RUN
