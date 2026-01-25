@@ -22,6 +22,9 @@ def get_supabase():
         st.secrets["SUPABASE_ANON_KEY"]
     )
 
+def euro(val):
+    return f"{val:,.2f} €".replace(",", " ").replace(".", ",")
+
 # =========================
 # MAIN
 # =========================
@@ -55,10 +58,11 @@ def main():
         return
 
     df_lots["lot"] = df_lots["lot"].astype(str)
+    df_lots["tantiemes"] = pd.to_numeric(df_lots["tantiemes"], errors="coerce").fillna(0)
 
     lot_filtre = st.sidebar.selectbox(
         "Lot",
-        ["Tous"] + sorted(df_lots["lot"].unique())
+        ["Tous"] + sorted(df_lots["lot"].unique().tolist())
     )
 
     # =========================
@@ -77,11 +81,12 @@ def main():
         st.warning("Aucune dépense pour cette année")
         return
 
-    df_dep["compte"] = df_dep["compte"].fillna("Non renseigné")
+    df_dep["montant_ttc"] = pd.to_numeric(df_dep["montant_ttc"], errors="coerce").fillna(0)
+    df_dep["compte"] = df_dep["compte"].astype(str).fillna("Non renseigné")
 
     compte_filtre = st.sidebar.selectbox(
         "Compte",
-        ["Tous"] + sorted(df_dep["compte"].unique())
+        ["Tous"] + sorted(df_dep["compte"].unique().tolist())
     )
 
     # =========================
@@ -99,18 +104,23 @@ def main():
         st.error("Aucune répartition trouvée")
         return
 
+    df_rep["quote_part"] = pd.to_numeric(df_rep["quote_part"], errors="coerce").fillna(0)
+
     # =========================
     # MERGE GLOBAL
     # =========================
     df = (
         df_rep
         .merge(df_dep, left_on="depense_id", right_on="id", how="left")
-        .merge(df_lots, left_on="lot_id", right_on="id", how="left", suffixes=("", "_lot"))
+        .merge(
+            df_lots,
+            left_on="lot_id",
+            right_on="id",
+            how="left",
+            suffixes=("", "_lot")
+        )
     )
 
-    # =========================
-    # FILTRES DATA
-    # =========================
     if compte_filtre != "Tous":
         df = df[df["compte"] == compte_filtre]
 
@@ -118,9 +128,11 @@ def main():
         df = df[df["lot"] == lot_filtre]
 
     # =========================
-    # CALCUL CHARGES RÉELLES
+    # CHARGES RÉELLES (TANTIÈMES)
     # =========================
-    df["charges_reelles"] = df["montant_ttc"] * df["quote_part"] / BASE_TANTIEMES
+    df["charges_reelles"] = (
+        df["montant_ttc"] * df["quote_part"] / BASE_TANTIEMES
+    )
 
     charges_lot = (
         df
@@ -139,20 +151,24 @@ def main():
         .execute()
     )
 
-    budget_total = sum(b["montant"] for b in budget_resp.data) if budget_resp.data else 0
+    budget_total = sum(
+        pd.to_numeric(b["montant"], errors="coerce")
+        for b in budget_resp.data
+    ) if budget_resp.data else 0
 
-    df_lots["appel_fonds"] = (
-        budget_total * df_lots["tantiemes"] / BASE_TANTIEMES
+    df_lots_calc = df_lots.copy()
+    df_lots_calc["appel_fonds"] = (
+        budget_total * df_lots_calc["tantiemes"] / BASE_TANTIEMES
     )
 
     if lot_filtre != "Tous":
-        df_lots = df_lots[df_lots["lot"] == lot_filtre]
+        df_lots_calc = df_lots_calc[df_lots_calc["lot"] == lot_filtre]
 
     # =========================
-    # TABLEAU FINAL PAR LOT
+    # FINAL PAR LOT
     # =========================
     final = (
-        df_lots[["lot", "appel_fonds"]]
+        df_lots_calc[["lot", "appel_fonds"]]
         .merge(charges_lot, on="lot", how="left")
         .fillna(0)
     )
@@ -160,7 +176,7 @@ def main():
     final["ecart"] = final["charges_reelles"] - final["appel_fonds"]
 
     # =========================
-    # KPI
+    # UI – KPI
     # =========================
     st.title("🏢 Pilotage des charges de l’immeuble")
     st.subheader("Charges par lot — Réel vs Appels de fonds")
@@ -169,15 +185,15 @@ def main():
 
     col1.metric(
         "Charges réelles totales",
-        f"{final['charges_reelles'].sum():,.2f} €".replace(",", " ").replace(".", ",")
+        euro(final["charges_reelles"].sum())
     )
     col2.metric(
         "Appels de fonds totaux",
-        f"{final['appel_fonds'].sum():,.2f} €".replace(",", " ").replace(".", ",")
+        euro(final["appel_fonds"].sum())
     )
     col3.metric(
         "Régularisation globale",
-        f"{final['ecart'].sum():,.2f} €".replace(",", " ").replace(".", ",")
+        euro(final["ecart"].sum())
     )
 
     # =========================
@@ -188,15 +204,15 @@ def main():
     st.dataframe(
         final.rename(columns={
             "lot": "Lot",
-            "appel_fonds": "Appels de fonds (€)",
             "charges_reelles": "Charges réelles (€)",
+            "appel_fonds": "Appels de fonds (€)",
             "ecart": "Écart (€)"
         }),
         use_container_width=True
     )
 
     # =========================
-    # DÉTAIL DES DÉPENSES PAR COMPTE
+    # DÉTAIL PAR COMPTE
     # =========================
     st.markdown("### 📊 Détail des dépenses par compte")
 
@@ -210,15 +226,17 @@ def main():
         .sort_values("charges_reelles", ascending=False)
     )
 
+    dep_compte["montant_total"] = dep_compte["montant_total"].apply(euro)
+    dep_compte["charges_reelles"] = dep_compte["charges_reelles"].apply(euro)
+
     st.dataframe(
         dep_compte.rename(columns={
             "compte": "Compte",
-            "montant_total": "Montant total facturé (€)",
-            "charges_reelles": "Charges réelles réparties (€)"
+            "montant_total": "Montant facturé (€)",
+            "charges_reelles": "Charges réparties (€)"
         }),
         use_container_width=True
     )
-
 
 # =========================
 # RUN
