@@ -44,9 +44,9 @@ def main():
         index=2
     )
 
-    # -------------------------
+    # =========================
     # LOTS
-    # -------------------------
+    # =========================
     lots_resp = supabase.table("lots").select("id, lot, tantiemes").execute()
     df_lots = pd.DataFrame(lots_resp.data)
 
@@ -62,9 +62,9 @@ def main():
         ["Tous"] + sorted(df_lots["lot"].unique())
     )
 
-    # -------------------------
-    # DÉPENSES (de l'année)
-    # -------------------------
+    # =========================
+    # DÉPENSES
+    # =========================
     dep_resp = (
         supabase
         .table("depenses")
@@ -78,10 +78,12 @@ def main():
         st.warning("Aucune dépense pour cette année.")
         return
 
-    df_dep["compte"] = df_dep["compte"].astype(str)
     df_dep["montant_ttc"] = pd.to_numeric(df_dep["montant_ttc"], errors="coerce").fillna(0)
+    df_dep["compte"] = df_dep["compte"].astype(str)
 
-    # Filtre compte (optionnel)
+    # =========================
+    # FILTRE COMPTE
+    # =========================
     compte_filtre = st.sidebar.selectbox(
         "Compte",
         ["Tous"] + sorted(df_dep["compte"].dropna().unique())
@@ -91,57 +93,47 @@ def main():
         df_dep = df_dep[df_dep["compte"] == compte_filtre]
 
     if df_dep.empty:
-        st.warning("Aucune dépense après filtrage par compte.")
+        st.warning("Aucune dépense après filtrage.")
         return
 
-    # On peut décider de ne prendre que les montants positifs (charges)
-    # Ici je prends tout, avoirs compris, pour respecter la compta :
-    total_charges = df_dep["montant_ttc"].sum()
+    # =========================
+    # TOTAL CHARGES FILTRÉ
+    # =========================
+    total_charges_filtre = df_dep["montant_ttc"].sum()
 
-    # -------------------------
-    # BUDGETS (APPELS DE FONDS)
-    # -------------------------
+    # =========================
+    # BUDGETS
+    # =========================
     bud_resp = (
         supabase
         .table("budgets")
-        .select("annee, compte, budget")
+        .select("annee, budget")
         .eq("annee", annee)
         .execute()
     )
     df_bud = pd.DataFrame(bud_resp.data) if bud_resp.data else pd.DataFrame(columns=["budget"])
-
-    df_bud["budget"] = pd.to_numeric(df_bud.get("budget", 0), errors="coerce").fillna(0)
-
-    # Si tu veux ne prendre qu’un compte (ex : 71300100), décommente :
-    # df_bud = df_bud[df_bud["compte"] == "71300100"]
+    df_bud["budget"] = pd.to_numeric(df_bud["budget"], errors="coerce").fillna(0)
 
     total_budget = df_bud["budget"].sum()
 
-    # -------------------------
-    # RÉPARTITION PAR LOT (PRORATA TANTIÈMES)
-    # -------------------------
-    df_lots_calc = df_lots.copy()
+    # =========================
+    # RÉPARTITION PAR LOT
+    # =========================
+    df = df_lots.copy()
+    df["part"] = df["tantiemes"] / BASE_TANTIEMES
 
-    # part de tantièmes du lot
-    df_lots_calc["part_tantiemes"] = df_lots_calc["tantiemes"] / BASE_TANTIEMES
-
-    # Charges réelles réparties par lot
-    df_lots_calc["charges_reelles"] = total_charges * df_lots_calc["part_tantiemes"]
-
-    # Appels de fonds répartis par lot
-    df_lots_calc["appel_fonds"] = total_budget * df_lots_calc["part_tantiemes"]
-
-    # Écart
-    df_lots_calc["ecart"] = df_lots_calc["charges_reelles"] - df_lots_calc["appel_fonds"]
-
-    # Filtre lot (après calcul pour garder cohérence des totaux)
-    if lot_filtre != "Tous":
-        df_lots_aff = df_lots_calc[df_lots_calc["lot"] == lot_filtre].copy()
-    else:
-        df_lots_aff = df_lots_calc.copy()
+    df["charges_reelles"] = total_charges_filtre * df["part"]
+    df["appel_fonds"] = total_budget * df["part"]
+    df["ecart"] = df["charges_reelles"] - df["appel_fonds"]
 
     # =========================
-    # UI
+    # FILTRE LOT (APRÈS CALCUL)
+    # =========================
+    if lot_filtre != "Tous":
+        df = df[df["lot"] == lot_filtre]
+
+    # =========================
+    # KPI (ALIGNÉS AVEC FILTRES)
     # =========================
     st.title("🏢 Pilotage des charges de l’immeuble")
     st.subheader("Charges par lot — Réel vs Appels de fonds")
@@ -149,22 +141,25 @@ def main():
     col1, col2, col3 = st.columns(3)
 
     col1.metric(
-        "Charges réelles totales (dépenses)",
-        eur(total_charges)
+        "Charges réelles (filtrées)",
+        eur(df["charges_reelles"].sum())
     )
     col2.metric(
-        "Appels de fonds totaux (budgets)",
-        eur(total_budget)
+        "Appels de fonds",
+        eur(df["appel_fonds"].sum())
     )
     col3.metric(
-        "Régularisation globale",
-        eur(df_lots_calc["ecart"].sum())
+        "Régularisation",
+        eur(df["ecart"].sum())
     )
 
+    # =========================
+    # TABLEAU
+    # =========================
     st.markdown("### 📋 Détail par lot")
-    st.caption("Répartition basée sur 10 000 tantièmes (prorata simples)")
+    st.caption("Répartition proratisée sur 10 000 tantièmes")
 
-    df_aff = df_lots_aff[["lot", "appel_fonds", "charges_reelles", "ecart"]].copy()
+    df_aff = df[["lot", "appel_fonds", "charges_reelles", "ecart"]].copy()
     df_aff.rename(columns={
         "lot": "Lot",
         "appel_fonds": "Appels de fonds (€)",
@@ -172,8 +167,7 @@ def main():
         "ecart": "Écart (€)"
     }, inplace=True)
 
-    # Formatage € pour le tableau
-    for col in ["Appels de fonds (€)", "Charges réelles (€)", "Écart (€)"]:
+    for col in df_aff.columns[1:]:
         df_aff[col] = df_aff[col].apply(eur)
 
     st.dataframe(df_aff, use_container_width=True)
