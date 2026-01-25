@@ -1,4 +1,9 @@
-import streamlit as st
+
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent
+sys.path.append(str(ROOT_DIR)) streamlit as st
 from supabase import create_client
 
 from utils.budget_vs_reel_ui import budget_vs_reel_ui
