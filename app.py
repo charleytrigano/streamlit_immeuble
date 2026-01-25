@@ -104,7 +104,7 @@ def main():
     df_rep["quote_part"] = pd.to_numeric(df_rep["quote_part"], errors="coerce").fillna(0)
 
     # =========================
-    # CALCUL CHARGES RÉELLES ✅
+    # CALCUL CHARGES RÉELLES
     # =========================
     df = (
         df_rep
@@ -118,14 +118,12 @@ def main():
     if lot_filtre != "Tous":
         df = df[df["lot"] == lot_filtre]
 
-    # 🔴 ICI LA CORRECTION MAJEURE
-    # quote_part est DÉJÀ une fraction (ex 0.0245)
+    # ✅ quote_part est une FRACTION (ex: 0.024)
     df["charges_reelles"] = df["montant_ttc"] * df["quote_part"]
 
     charges_reelles = (
-        df
-        .groupby("lot", as_index=False)
-        .agg(charges_reelles=("charges_reelles", "sum"))
+        df.groupby("lot", as_index=False)
+          .agg(charges_reelles=("charges_reelles", "sum"))
     )
 
     # =========================
@@ -134,12 +132,12 @@ def main():
     budget_resp = (
         supabase
         .table("budgets")
-        .select("montant")
+        .select("budget")
         .eq("annee", annee)
         .execute()
     )
 
-    total_budget = sum(b["montant"] for b in budget_resp.data) if budget_resp.data else 0
+    total_budget = sum(b["budget"] for b in budget_resp.data) if budget_resp.data else 0
 
     df_lots["appel_fonds"] = (
         total_budget * df_lots["tantiemes"] / BASE_TANTIEMES
@@ -172,7 +170,7 @@ def main():
     col3.metric("Régularisation globale", eur(final["ecart"].sum()))
 
     st.markdown("### 📋 Régularisation par lot")
-    st.caption("Répartition basée sur quote-part (fraction)")
+    st.caption("Répartition basée sur quote-part")
 
     st.dataframe(
         final.rename(columns={
