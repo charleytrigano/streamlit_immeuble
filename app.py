@@ -2,9 +2,6 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 
-# =========================
-# CONFIG
-# =========================
 BASE_TANTIEMES = 10_000
 
 st.set_page_config(
@@ -17,9 +14,10 @@ st.set_page_config(
 # =========================
 @st.cache_resource
 def get_supabase():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_ANON_KEY"]
-    return create_client(url, key)
+    return create_client(
+        st.secrets["SUPABASE_URL"],
+        st.secrets["SUPABASE_ANON_KEY"]
+    )
 
 supabase = get_supabase()
 
@@ -79,7 +77,7 @@ def main():
     df_lots = pd.DataFrame(lots_resp.data)
 
     # =========================
-    # MERGE DEPENSES x REPARTITION
+    # MERGE
     # =========================
     df = df_rep.merge(
         df_dep,
@@ -88,18 +86,16 @@ def main():
         how="left"
     )
 
-    df["charges_reelles"] = (
-        df["montant_ttc"] * df["quote_part"] / BASE_TANTIEMES
-    )
+    df["charges_reelles"] = df["montant_ttc"] * df["quote_part"] / BASE_TANTIEMES
 
     # =========================
-    # FILTRES SIDEBAR
+    # FILTRES
     # =========================
-    lots = ["Tous"] + sorted(df["lot"].astype(str).unique().tolist())
-    comptes = ["Tous"] + sorted(df["compte"].astype(str).unique().tolist())
+    lot_choices = ["Tous"] + sorted(df["lot"].astype(str).unique())
+    compte_choices = ["Tous"] + sorted(df["compte"].astype(str).unique())
 
-    lot_filtre = st.sidebar.selectbox("Lot", lots)
-    compte_filtre = st.sidebar.selectbox("Compte", comptes)
+    lot_filtre = st.sidebar.selectbox("Lot", lot_choices)
+    compte_filtre = st.sidebar.selectbox("Compte", compte_choices)
 
     if lot_filtre != "Tous":
         df = df[df["lot"].astype(str) == lot_filtre]
@@ -108,32 +104,32 @@ def main():
         df = df[df["compte"].astype(str) == compte_filtre]
 
     # =========================
-    # CHARGES REELLES PAR LOT
+    # CHARGES PAR LOT
     # =========================
-    charges_reelles = (
-        df
-        .groupby("lot", as_index=False)
-        .agg(charges_reelles=("charges_reelles", "sum"))
-    )
+    charges = df.groupby("lot", as_index=False)["charges_reelles"].sum()
 
     # =========================
-    # BUDGET / APPELS DE FONDS
+    # BUDGET (ROBUSTE)
     # =========================
-    budget_resp = (
-        supabase
-        .table("budget")
-        .select("montant")
-        .eq("annee", annee)
-        .execute()
-    )
+    try:
+        budget_resp = (
+            supabase
+            .table("budgets")  # 👈 NOM CORRECT
+            .select("montant")
+            .eq("annee", annee)
+            .execute()
+        )
 
-    total_budget = sum(b["montant"] for b in budget_resp.data)
+        total_budget = sum(b["montant"] for b in budget_resp.data)
 
-    df_lots["appel_fonds"] = (
-        total_budget * df_lots["tantiemes"] / BASE_TANTIEMES
-    )
+    except Exception as e:
+        st.error("❌ Erreur chargement budget")
+        st.code(str(e))
+        total_budget = 0
 
-    final = charges_reelles.merge(
+    df_lots["appel_fonds"] = total_budget * df_lots["tantiemes"] / BASE_TANTIEMES
+
+    final = charges.merge(
         df_lots[["lot", "appel_fonds"]],
         on="lot",
         how="left"
@@ -144,46 +140,26 @@ def main():
     # =========================
     # KPI
     # =========================
-    col1, col2, col3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
 
-    col1.metric(
-        "Charges réelles totales",
-        euro(final["charges_reelles"].sum())
-    )
-
-    col2.metric(
-        "Appels de fonds totaux",
-        euro(final["appel_fonds"].sum())
-    )
-
-    col3.metric(
-        "Régularisation globale",
-        euro(final["ecart"].sum())
-    )
+    c1.metric("Charges réelles", euro(final["charges_reelles"].sum()))
+    c2.metric("Appels de fonds", euro(final["appel_fonds"].sum()))
+    c3.metric("Régularisation", euro(final["ecart"].sum()))
 
     # =========================
-    # TABLEAU
+    # TABLE
     # =========================
     st.markdown("### 📋 Régularisation par lot")
-    st.caption("Répartition basée sur 10 000 tantièmes")
 
-    final_display = final.copy()
-    final_display["Charges réelles (€)"] = final_display["charges_reelles"].apply(euro)
-    final_display["Appels de fonds (€)"] = final_display["appel_fonds"].apply(euro)
-    final_display["Écart (€)"] = final_display["ecart"].apply(euro)
+    display = final.copy()
+    display["Charges réelles (€)"] = display["charges_reelles"].apply(euro)
+    display["Appels de fonds (€)"] = display["appel_fonds"].apply(euro)
+    display["Écart (€)"] = display["ecart"].apply(euro)
 
     st.dataframe(
-        final_display[[
-            "lot",
-            "Charges réelles (€)",
-            "Appels de fonds (€)",
-            "Écart (€)"
-        ]],
+        display[["lot", "Charges réelles (€)", "Appels de fonds (€)", "Écart (€)"]],
         use_container_width=True
     )
 
-# =========================
-# RUN
-# =========================
 if __name__ == "__main__":
     main()
