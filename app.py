@@ -172,6 +172,38 @@ def main():
 
     st.dataframe(df_aff, use_container_width=True)
 
+
+# =========================
+# DÉTAIL DES DÉPENSES PAR COMPTE
+# =========================
+st.markdown("### 📊 Détail des dépenses par compte")
+st.caption("Basé sur les dépenses filtrées (avant répartition par lot)")
+
+df_compte = (
+    df_dep
+    .groupby("compte", as_index=False)
+    .agg(montant=("montant_ttc", "sum"))
+    .sort_values("montant", ascending=False)
+)
+
+df_compte["part (%)"] = (
+    df_compte["montant"] / df_compte["montant"].sum() * 100
+)
+
+df_compte_aff = df_compte.copy()
+df_compte_aff["montant"] = df_compte_aff["montant"].apply(eur)
+df_compte_aff["part (%)"] = df_compte_aff["part (%)"].round(2)
+
+df_compte_aff.rename(columns={
+    "compte": "Compte",
+    "montant": "Montant (€)",
+}, inplace=True)
+
+st.dataframe(
+    df_compte_aff,
+    use_container_width=True
+)
+
 # =========================
 # RUN
 # =========================
