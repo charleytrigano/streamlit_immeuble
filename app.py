@@ -123,7 +123,7 @@ def main(supabase):
     # =========================
     budget_resp = (
         supabase
-        .table("budget")
+        .table("budgets")
         .select("annee, budget")
         .eq("annee", annee)
         .execute()
