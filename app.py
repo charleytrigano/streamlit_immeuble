@@ -26,11 +26,15 @@ def main():
     supabase = get_supabase()
 
     # =========================
-    # SIDEBAR
+    # SIDEBAR – FILTRES
     # =========================
     st.sidebar.title("Filtres")
 
-    annee = st.sidebar.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
+    annee = st.sidebar.selectbox(
+        "Année",
+        [2023, 2024, 2025, 2026],
+        index=2
+    )
 
     # =========================
     # LOTS
@@ -65,7 +69,7 @@ def main():
     )
 
     # =========================
-    # A — REPARTITION
+    # REPARTITIONS
     # =========================
     df_rep = pd.DataFrame(
         supabase
@@ -79,11 +83,18 @@ def main():
     # C — AFFECTATION DIRECTE
     # =========================
     direct = df_dep[df_dep["lot_id"].notna()].copy()
-    direct["charges"] = direct["montant_ttc"]
 
     direct = direct.merge(
-        df_lots, left_on="lot_id", right_on="id", how="left"
+        df_lots,
+        left_on="lot_id",
+        right_on="id",
+        how="left",
+        suffixes=("", "_lot")
     )
+
+    direct["charges"] = direct["montant_ttc"]
+
+    direct = direct[["lot", "compte", "charges"]]
 
     # =========================
     # A — REPARTITION PAR CLE
@@ -92,22 +103,31 @@ def main():
         df_dep[df_dep["lot_id"].isna()],
         left_on="depense_id",
         right_on="id",
-        how="left"
+        how="left",
+        suffixes=("", "_dep")
+    )
+
+    # RENOMMAGE EXPLICITE (clé de la correction)
+    rep = rep.rename(columns={
+        "lot_id": "lot_id_rep"
+    })
+
+    rep = rep.merge(
+        df_lots,
+        left_on="lot_id_rep",
+        right_on="id",
+        how="left",
+        suffixes=("", "_lot")
     )
 
     rep["charges"] = rep["montant_ttc"] * rep["quote_part"] / BASE_TANTIEMES
 
-    rep = rep.merge(
-        df_lots, left_on="lot_id", right_on="id", how="left"
-    )
+    rep = rep[["lot", "compte", "charges"]]
 
     # =========================
     # UNION A + C
     # =========================
-    charges = pd.concat([
-        direct[["lot", "compte", "charges"]],
-        rep[["lot", "compte", "charges"]]
-    ])
+    charges = pd.concat([direct, rep], ignore_index=True)
 
     if compte_filtre != "Tous":
         charges = charges[charges["compte"] == compte_filtre]
@@ -151,18 +171,12 @@ def main():
 
     col1, col2, col3 = st.columns(3)
 
-    col1.metric(
-        "Charges réelles",
-        f"{final['charges_reelles'].sum():,.2f} €".replace(",", " ").replace(".", ",")
-    )
-    col2.metric(
-        "Appels de fonds",
-        f"{final['appel_fonds'].sum():,.2f} €".replace(",", " ").replace(".", ",")
-    )
-    col3.metric(
-        "Régularisation",
-        f"{final['ecart'].sum():,.2f} €".replace(",", " ").replace(".", ",")
-    )
+    def euro(x):
+        return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
+
+    col1.metric("Charges réelles", euro(final["charges_reelles"].sum()))
+    col2.metric("Appels de fonds", euro(final["appel_fonds"].sum()))
+    col3.metric("Régularisation", euro(final["ecart"].sum()))
 
     st.dataframe(
         final.rename(columns={
