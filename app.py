@@ -23,7 +23,11 @@ def get_supabase():
     )
 
 def euro(val):
-    return f"{val:,.2f} €".replace(",", " ").replace(".", ",")
+    try:
+        v = float(val)
+    except Exception:
+        v = 0.0
+    return f"{v:,.2f} €".replace(",", " ").replace(".", ",")
 
 # =========================
 # MAIN
@@ -45,12 +49,17 @@ def main():
     # =========================
     # LOTS
     # =========================
-    lots_resp = (
-        supabase
-        .table("lots")
-        .select("id, lot, tantiemes")
-        .execute()
-    )
+    try:
+        lots_resp = (
+            supabase
+            .table("lots")
+            .select("id, lot, tantiemes")
+            .execute()
+        )
+    except Exception as e:
+        st.error(f"Erreur Supabase (lots) : {e}")
+        return
+
     df_lots = pd.DataFrame(lots_resp.data)
 
     if df_lots.empty:
@@ -68,13 +77,18 @@ def main():
     # =========================
     # DÉPENSES
     # =========================
-    dep_resp = (
-        supabase
-        .table("depenses")
-        .select("id, montant_ttc, compte, annee")
-        .eq("annee", annee)
-        .execute()
-    )
+    try:
+        dep_resp = (
+            supabase
+            .table("depenses")
+            .select("id, montant_ttc, compte, annee")
+            .eq("annee", annee)
+            .execute()
+        )
+    except Exception as e:
+        st.error(f"Erreur Supabase (depenses) : {e}")
+        return
+
     df_dep = pd.DataFrame(dep_resp.data)
 
     if df_dep.empty:
@@ -92,12 +106,17 @@ def main():
     # =========================
     # RÉPARTITION DES DÉPENSES
     # =========================
-    rep_resp = (
-        supabase
-        .table("repartition_depenses")
-        .select("depense_id, lot_id, quote_part")
-        .execute()
-    )
+    try:
+        rep_resp = (
+            supabase
+            .table("repartition_depenses")
+            .select("depense_id, lot_id, quote_part")
+            .execute()
+        )
+    except Exception as e:
+        st.error(f"Erreur Supabase (repartition_depenses) : {e}")
+        return
+
     df_rep = pd.DataFrame(rep_resp.data)
 
     if df_rep.empty:
@@ -143,18 +162,25 @@ def main():
     # =========================
     # BUDGET / APPELS DE FONDS
     # =========================
-    budget_resp = (
-        supabase
-        .table("budgets")
-        .select("montant")
-        .eq("annee", annee)
-        .execute()
-    )
+    try:
+        budget_resp = (
+            supabase
+            .table("budgets")
+            .select("annee, montant")
+            .eq("annee", annee)
+            .execute()
+        )
+    except Exception as e:
+        st.error(f"Erreur Supabase (budgets) : {e}")
+        budget_resp = None
 
-    budget_total = sum(
-        pd.to_numeric(b["montant"], errors="coerce")
-        for b in budget_resp.data
-    ) if budget_resp.data else 0
+    if budget_resp and budget_resp.data:
+        budget_total = sum(
+            pd.to_numeric(b.get("montant", 0), errors="coerce")
+            for b in budget_resp.data
+        )
+    else:
+        budget_total = 0
 
     df_lots_calc = df_lots.copy()
     df_lots_calc["appel_fonds"] = (
@@ -226,15 +252,15 @@ def main():
         .sort_values("charges_reelles", ascending=False)
     )
 
-    dep_compte["montant_total"] = dep_compte["montant_total"].apply(euro)
-    dep_compte["charges_reelles"] = dep_compte["charges_reelles"].apply(euro)
+    dep_compte["montant_total_fmt"] = dep_compte["montant_total"].apply(euro)
+    dep_compte["charges_reelles_fmt"] = dep_compte["charges_reelles"].apply(euro)
 
     st.dataframe(
         dep_compte.rename(columns={
             "compte": "Compte",
-            "montant_total": "Montant facturé (€)",
-            "charges_reelles": "Charges réparties (€)"
-        }),
+            "montant_total_fmt": "Montant facturé (€)",
+            "charges_reelles_fmt": "Charges réparties (€)"
+        })[["Compte", "Montant facturé (€)", "Charges réparties (€)"]],
         use_container_width=True
     )
 
