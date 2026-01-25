@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import os
+from supabase import create_client
 
 # =========================
 # PARAMÈTRES MÉTIER
@@ -37,15 +39,13 @@ def main(supabase):
         return
 
     df_lots = pd.DataFrame(lots_resp.data)
+    liste_lots = df_lots["lot"].astype(str).tolist()
 
     with col2:
-        lot_filter = st.selectbox(
-            "Lot",
-            ["Tous"] + df_lots := df_lots["lot"].astype(str).tolist()
-        )
+        lot_filter = st.selectbox("Lot", ["Tous"] + liste_lots)
 
     # -------------------------
-    # COMPTES
+    # DÉPENSES
     # -------------------------
     dep_resp = (
         supabase
@@ -60,12 +60,10 @@ def main(supabase):
         return
 
     df_dep = pd.DataFrame(dep_resp.data)
+    liste_comptes = sorted(df_dep["compte"].astype(str).unique().tolist())
 
     with col3:
-        compte_filter = st.selectbox(
-            "Compte",
-            ["Tous"] + sorted(df_dep["compte"].astype(str).unique().tolist())
-        )
+        compte_filter = st.selectbox("Compte", ["Tous"] + liste_comptes)
 
     # -------------------------
     # RÉPARTITIONS
@@ -84,7 +82,7 @@ def main(supabase):
     df_rep = pd.DataFrame(rep_resp.data)
 
     # -------------------------
-    # JOIN COMPLET
+    # JOINS
     # -------------------------
     df = (
         df_rep
@@ -93,7 +91,7 @@ def main(supabase):
     )
 
     # -------------------------
-    # FILTRES UTILISATEUR
+    # FILTRES
     # -------------------------
     if lot_filter != "Tous":
         df = df[df["lot"].astype(str) == lot_filter]
@@ -103,20 +101,13 @@ def main(supabase):
 
     # -------------------------
     # CALCUL CHARGES RÉELLES
-    # =========================
-    # RÉPARTITION SUR 1 / 10 000
-    # =========================
-    df["charge_reelle"] = (
-        df["montant_ttc"] * df["quote_part"] / BASE_TANTIEMES
-    )
+    # -------------------------
+    df["charges_reelles"] = df["montant_ttc"] * df["quote_part"] / BASE_TANTIEMES
 
-    # -------------------------
-    # AGRÉGATION PAR LOT / COMPTE
-    # -------------------------
     charges_reelles = (
         df
         .groupby(["lot", "compte"], as_index=False)
-        .agg(charges_reelles=("charge_reelle", "sum"))
+        .agg(charges_reelles=("charges_reelles", "sum"))
     )
 
     # -------------------------
@@ -130,18 +121,10 @@ def main(supabase):
         .execute()
     )
 
-    total_budget = (
-        sum(b["budget"] for b in budget_resp.data)
-        if budget_resp.data else 0
-    )
+    total_budget = sum(b["budget"] for b in budget_resp.data) if budget_resp.data else 0
 
-    df_lots["appel_fonds"] = (
-        total_budget * df_lots["tantiemes"] / BASE_TANTIEMES
-    )
+    df_lots["appel_fonds"] = total_budget * df_lots["tantiemes"] / BASE_TANTIEMES
 
-    # -------------------------
-    # MERGE FINAL
-    # -------------------------
     final = charges_reelles.merge(
         df_lots[["lot", "appel_fonds"]],
         on="lot",
@@ -155,25 +138,14 @@ def main(supabase):
     # -------------------------
     col1, col2, col3 = st.columns(3)
 
-    col1.metric(
-        "Total charges réelles (€)",
-        f"{final['charges_reelles'].sum():,.2f}"
-    )
-
-    col2.metric(
-        "Total appels de fonds (€)",
-        f"{final['appel_fonds'].sum():,.2f}"
-    )
-
-    col3.metric(
-        "Écart global (€)",
-        f"{final['ecart'].sum():,.2f}"
-    )
+    col1.metric("Total charges réelles (€)", f"{final['charges_reelles'].sum():,.2f}")
+    col2.metric("Total appels de fonds (€)", f"{final['appel_fonds'].sum():,.2f}")
+    col3.metric("Écart global (€)", f"{final['ecart'].sum():,.2f}")
 
     st.caption("ℹ️ Répartition basée sur 1 / 10 000 tantièmes")
 
     # -------------------------
-    # TABLEAU AG
+    # TABLEAU FINAL
     # -------------------------
     st.markdown("### 📋 Régularisation des charges par lot")
 
@@ -193,9 +165,6 @@ def main(supabase):
 # LANCEMENT
 # =========================
 if __name__ == "__main__":
-    from supabase import create_client
-    import os
-
     SUPABASE_URL = os.environ.get("SUPABASE_URL")
     SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
