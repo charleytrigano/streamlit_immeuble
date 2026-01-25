@@ -39,7 +39,7 @@ def main():
     st.subheader("Charges par lot — Réel vs Appels de fonds")
 
     # =========================
-    # SIDEBAR – FILTRES
+    # SIDEBAR
     # =========================
     st.sidebar.header("Filtres")
 
@@ -59,9 +59,13 @@ def main():
         st.error("Aucun lot trouvé.")
         return
 
+    # 🔐 CAST EXPLICITE
+    df_lots["id"] = df_lots["id"].astype(str)
+    df_lots["lot"] = df_lots["lot"].astype(str)
+
     lot_filtre = st.sidebar.selectbox(
         "Lot",
-        ["Tous"] + sorted(df_lots["lot"].astype(str).tolist())
+        ["Tous"] + sorted(df_lots["lot"].unique().tolist())
     )
 
     # =========================
@@ -81,19 +85,20 @@ def main():
         st.warning("Aucune dépense pour cette année.")
         return
 
+    # 🔐 CAST EXPLICITE
+    df_dep["lot_id"] = df_dep["lot_id"].astype(str)
+    df_dep["compte"] = df_dep["compte"].astype(str)
+
     compte_filtre = st.sidebar.selectbox(
         "Compte",
-        ["Tous"] + sorted(df_dep["compte"].dropna().astype(str).unique().tolist())
+        ["Tous"] + sorted(df_dep["compte"].dropna().unique().tolist())
     )
 
-    # =========================
-    # FILTRES
-    # =========================
     if compte_filtre != "Tous":
-        df_dep = df_dep[df_dep["compte"].astype(str) == compte_filtre]
+        df_dep = df_dep[df_dep["compte"] == compte_filtre]
 
     # =========================
-    # JOIN LOTS
+    # MERGE SÉCURISÉ
     # =========================
     df = df_dep.merge(
         df_lots,
@@ -103,10 +108,10 @@ def main():
     )
 
     if lot_filtre != "Tous":
-        df = df[df["lot"].astype(str) == lot_filtre]
+        df = df[df["lot"] == lot_filtre]
 
     # =========================
-    # CHARGES RÉELLES PAR LOT
+    # CHARGES RÉELLES
     # =========================
     charges_reelles = (
         df.groupby("lot", as_index=False)
@@ -114,25 +119,13 @@ def main():
     )
 
     # =========================
-    # APPELS DE FONDS (BUDGET)
+    # APPELS DE FONDS (désactivés proprement)
     # =========================
-    # ⚠️ Table budget absente → appels = 0
-    df_lots["appel_fonds"] = 0
-
-    appels = df_lots.groupby("lot", as_index=False).agg(
-        appels_fonds=("appel_fonds", "sum")
+    charges_reelles["appels_fonds"] = 0
+    charges_reelles["ecart"] = (
+        charges_reelles["charges_reelles"]
+        - charges_reelles["appels_fonds"]
     )
-
-    # =========================
-    # FINAL
-    # =========================
-    final = charges_reelles.merge(
-        appels,
-        on="lot",
-        how="left"
-    ).fillna(0)
-
-    final["ecart"] = final["charges_reelles"] - final["appels_fonds"]
 
     # =========================
     # KPI
@@ -141,17 +134,17 @@ def main():
 
     col1.metric(
         "Charges réelles totales",
-        euro(final["charges_reelles"].sum())
+        euro(charges_reelles["charges_reelles"].sum())
     )
 
     col2.metric(
         "Appels de fonds totaux",
-        euro(final["appels_fonds"].sum())
+        euro(0)
     )
 
     col3.metric(
         "Régularisation globale",
-        euro(final["ecart"].sum())
+        euro(charges_reelles["ecart"].sum())
     )
 
     # =========================
@@ -160,19 +153,19 @@ def main():
     st.markdown("### 📋 Régularisation par lot")
     st.caption("Répartition basée sur 10 000 tantièmes")
 
-    final_display = final.copy()
-    final_display["charges_reelles"] = final_display["charges_reelles"].apply(euro)
-    final_display["appels_fonds"] = final_display["appels_fonds"].apply(euro)
-    final_display["ecart"] = final_display["ecart"].apply(euro)
+    display = charges_reelles.copy()
+    display["charges_reelles"] = display["charges_reelles"].apply(euro)
+    display["appels_fonds"] = display["appels_fonds"].apply(euro)
+    display["ecart"] = display["ecart"].apply(euro)
 
-    final_display = final_display.rename(columns={
+    display = display.rename(columns={
         "lot": "Lot",
         "charges_reelles": "Charges réelles (€)",
         "appels_fonds": "Appels de fonds (€)",
         "ecart": "Écart (€)"
     })
 
-    st.dataframe(final_display, use_container_width=True)
+    st.dataframe(display, use_container_width=True)
 
 # =========================
 # RUN
