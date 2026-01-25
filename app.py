@@ -180,7 +180,7 @@ st.markdown("### 📊 Détail des dépenses par compte")
 st.caption("Basé sur les dépenses filtrées (avant répartition par lot)")
 
 df_compte = (
-    df_dep
+   
     .groupby("compte", as_index=False)
     .agg(montant=("montant_ttc", "sum"))
     .sort_values("montant", ascending=False)
