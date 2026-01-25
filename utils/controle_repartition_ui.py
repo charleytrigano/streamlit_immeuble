@@ -3,16 +3,21 @@ import pandas as pd
 
 TOLERANCE = 0.01  # tolérance d'arrondi
 
+
 def controle_repartition_ui(supabase):
     st.title("✅ Contrôle de répartition des dépenses")
 
     # -------------------------
     # Sélection année
     # -------------------------
-    annee = st.selectbox("Année", [2023, 2024, 2025, 2026], index=0)
+    annee = st.selectbox(
+        "Année",
+        [2023, 2024, 2025, 2026],
+        index=0
+    )
 
     # -------------------------
-    # Dépenses
+    # Chargement dépenses
     # -------------------------
     dep_resp = (
         supabase
@@ -27,9 +32,10 @@ def controle_repartition_ui(supabase):
         return
 
     df_dep = pd.DataFrame(dep_resp.data)
+    df_dep["montant_ttc"] = df_dep["montant_ttc"].astype(float)
 
     # -------------------------
-    # Répartition (quote-part)
+    # Chargement répartitions (quote-part)
     # -------------------------
     rep_resp = (
         supabase
@@ -43,6 +49,7 @@ def controle_repartition_ui(supabase):
         return
 
     df_rep = pd.DataFrame(rep_resp.data)
+    df_rep["quote_part"] = df_rep["quote_part"].astype(float)
 
     # -------------------------
     # Calcul du montant réparti
@@ -66,9 +73,36 @@ def controle_repartition_ui(supabase):
             montant_ttc=("montant_ttc", "first"),
             montant_reparti=("montant_reparti", "sum")
         )
-    
+    )
 
     df_sum["ecart"] = df_sum["montant_ttc"] - df_sum["montant_reparti"]
+
+    # ==========================================================
+    # ✅ AMÉLIORATION 1 : détecter les dépenses sans répartition
+    # ==========================================================
+    depenses_non_reparties = df_dep[
+        ~df_dep["id"].isin(df_sum["depense_id"])
+    ].copy()
+
+    if not depenses_non_reparties.empty:
+        depenses_non_reparties["montant_reparti"] = 0.0
+        depenses_non_reparties["ecart"] = depenses_non_reparties["montant_ttc"]
+        depenses_non_reparties = depenses_non_reparties.rename(
+            columns={"id": "depense_id"}
+        )
+
+        df_sum = pd.concat(
+            [
+                df_sum,
+                depenses_non_reparties[[
+                    "depense_id",
+                    "montant_ttc",
+                    "montant_reparti",
+                    "ecart"
+                ]]
+            ],
+            ignore_index=True
+        )
 
     # -------------------------
     # KPI globaux
@@ -93,11 +127,13 @@ def controle_repartition_ui(supabase):
         st.success("✅ Toutes les dépenses sont correctement réparties.")
     else:
         st.error(f"❌ {len(anomalies)} dépense(s) incorrectement répartie(s).")
+
         st.dataframe(
             anomalies.rename(columns={
+                "depense_id": "ID dépense",
                 "montant_ttc": "Montant dépense (€)",
                 "montant_reparti": "Montant réparti (€)",
                 "ecart": "Écart (€)"
-            }),
+            }).sort_values("Écart (€)", ascending=False),
             use_container_width=True
         )
