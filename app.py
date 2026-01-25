@@ -1,68 +1,72 @@
 import sys
 from pathlib import Path
 
-# -------------------------------------------------
-# Gestion du path pour importer utils/
-# -------------------------------------------------
+# ======================================================
+# PATH (pour utils/)
+# ======================================================
 ROOT_DIR = Path(__file__).resolve().parent
-sys.path.append(str(ROOT_DIR))
+sys.path.insert(0, str(ROOT_DIR))
 
-# -------------------------------------------------
-# Imports standards
-# -------------------------------------------------
+# ======================================================
+# IMPORTS
+# ======================================================
 import streamlit as st
 from supabase import create_client
 
-# -------------------------------------------------
-# Imports UI
-# -------------------------------------------------
 from utils.depenses_ui import depenses_ui
 from utils.budget_ui import budget_ui
 from utils.budget_vs_reel_ui import budget_vs_reel_ui
 from utils.controle_repartition_ui import controle_repartition_ui
+from utils.charges_par_lot_ui import charges_par_lot_ui
 
-# -------------------------------------------------
-# Configuration Streamlit
-# -------------------------------------------------
+# ======================================================
+# CONFIG STREAMLIT
+# ======================================================
 st.set_page_config(
-    page_title="Pilotage des charges",
-    layout="wide"
+    page_title="Pilotage des charges de l’immeuble",
+    layout="wide",
 )
 
-# -------------------------------------------------
-# Connexion Supabase
-# -------------------------------------------------
+st.title("🏢 Pilotage des charges de l’immeuble")
+
+# ======================================================
+# CONNEXION SUPABASE
+# ======================================================
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# -------------------------------------------------
-# Menu principal
-# -------------------------------------------------
-st.sidebar.title("📊 Pilotage des charges")
+# ======================================================
+# SIDEBAR — NAVIGATION
+# ======================================================
+st.sidebar.title("Navigation")
 
-menu = st.sidebar.radio(
-    "Navigation",
+page = st.sidebar.radio(
+    "Aller à",
     [
-        "Dépenses",
-        "Budget",
-        "Budget vs Réel",
-        "Contrôle répartition",
-    ]
+        "📋 État des dépenses",
+        "💰 Budget",
+        "📊 Budget vs Réel",
+        "📐 Contrôle répartition",
+        "🏠 Charges par lot",
+    ],
 )
 
-# -------------------------------------------------
-# Routing
-# -------------------------------------------------
-if menu == "Dépenses":
+# ======================================================
+# ROUTAGE DES PAGES
+# ======================================================
+if page == "📋 État des dépenses":
     depenses_ui(supabase)
 
-elif menu == "Budget":
+elif page == "💰 Budget":
     budget_ui(supabase)
 
-elif menu == "Budget vs Réel":
+elif page == "📊 Budget vs Réel":
     budget_vs_reel_ui(supabase)
 
-elif menu == "Contrôle répartition":
+elif page == "📐 Contrôle répartition":
     controle_repartition_ui(supabase)
+
+elif page == "🏠 Charges par lot":
+    charges_par_lot_ui(supabase)
