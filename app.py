@@ -166,7 +166,7 @@ def main():
         budget_resp = (
             supabase
             .table("budgets")
-            .select("annee, montant")
+            .select("annee, budget")
             .eq("annee", annee)
             .execute()
         )
