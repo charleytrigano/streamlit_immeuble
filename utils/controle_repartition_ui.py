@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 
-TOLERANCE = 0.01  # tolérance d'arrondi en euros
-BASE_REPARTITION = 10000
+TOLERANCE = 0.01      # tolérance d'arrondi en euros
+BASE_REPARTITION = 10000  # quote-part exprimée en 1 / 10 000
 
 
 def controle_repartition_ui(supabase):
@@ -14,7 +14,7 @@ def controle_repartition_ui(supabase):
     annee = st.selectbox("Année", [2023, 2024, 2025, 2026], index=0)
 
     # -------------------------
-    # Chargement dépenses
+    # Chargement DÉPENSES
     # -------------------------
     dep_resp = (
         supabase
@@ -31,7 +31,7 @@ def controle_repartition_ui(supabase):
     df_dep = pd.DataFrame(dep_resp.data)
 
     # -------------------------
-    # Chargement répartitions
+    # Chargement RÉPARTITIONS
     # -------------------------
     rep_resp = (
         supabase
@@ -56,11 +56,12 @@ def controle_repartition_ui(supabase):
         how="left"
     )
 
+    # quote_part est en 1 / 10 000
     df["quote_norm"] = df["quote_part"] / BASE_REPARTITION
     df["montant_reparti"] = df["montant_ttc"] * df["quote_norm"]
 
     # -------------------------
-    # Agrégation par dépense
+    # Agrégation par dépense (on garde le compte) (B)
     # -------------------------
     df_sum = (
         df
@@ -98,21 +99,27 @@ def controle_repartition_ui(supabase):
 
     st.error(f"{len(anomalies)} dépense(s) incorrectement répartie(s).")
 
-    st.dataframe(
-        anomalies.rename(columns={
-            "depense_id": "ID dépense",
-            "compte": "Compte",
-            "montant_ttc": "Montant dépense (€)",
-            "montant_reparti": "Montant réparti (€)",
-            "ecart": "Écart (€)"
-        }),
-        use_container_width=True
-    )
+    # on fixe l'ordre des colonnes pour bien voir le compte
+    anomalies_view = anomalies[[
+        "depense_id",
+        "compte",
+        "montant_ttc",
+        "montant_reparti",
+        "ecart",
+    ]].rename(columns={
+        "depense_id": "ID dépense",
+        "compte": "Compte",
+        "montant_ttc": "Montant dépense (€)",
+        "montant_reparti": "Montant réparti (€)",
+        "ecart": "Écart (€)",
+    })
+
+    st.dataframe(anomalies_view, use_container_width=True)
 
     # -------------------------
-    # Détail par lot (C)
+    # Détail par lot pour les seules anomalies (C)
     # -------------------------
-    st.markdown("### 🔎 Détail par lot")
+    st.markdown("### 🔎 Détail par lot des dépenses en anomalie")
 
     detail = df.merge(
         anomalies[["depense_id"]],
@@ -120,18 +127,18 @@ def controle_repartition_ui(supabase):
         how="inner"
     )
 
-    st.dataframe(
-        detail[[
-            "depense_id",
-            "compte",
-            "lot_id",
-            "quote_part",
-            "montant_reparti"
-        ]].rename(columns={
-            "depense_id": "ID dépense",
-            "lot_id": "Lot",
-            "quote_part": "Quote-part (‰)",
-            "montant_reparti": "Montant réparti (€)"
-        }),
-        use_container_width=True
-    )
+    detail_view = detail[[
+        "depense_id",
+        "compte",
+        "lot_id",
+        "quote_part",
+        "montant_reparti",
+    ]].rename(columns={
+        "depense_id": "ID dépense",
+        "compte": "Compte",
+        "lot_id": "Lot",
+        "quote_part": "Quote-part (‰)",
+        "montant_reparti": "Montant réparti (€)",
+    })
+
+    st.dataframe(detail_view, use_container_width=True)
