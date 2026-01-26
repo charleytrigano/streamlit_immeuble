@@ -2,17 +2,19 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 
-# =========================
+# =====================================================
 # CONFIG
-# =========================
+# =====================================================
+BASE_TANTIEMES = 10_000
+
 st.set_page_config(
-    page_title="🏢 Pilotage des charges",
+    page_title="Pilotage des charges",
     layout="wide"
 )
 
-# =========================
+# =====================================================
 # SUPABASE
-# =========================
+# =====================================================
 @st.cache_resource
 def get_supabase():
     return create_client(
@@ -22,23 +24,20 @@ def get_supabase():
 
 supabase = get_supabase()
 
-# =========================
-# OUTILS
-# =========================
-def load_view(view_name, filters=None):
-    q = supabase.table(view_name).select("*")
-    if filters:
-        for k, v in filters.items():
-            q = q.eq(k, v)
-    res = q.execute()
-    return pd.DataFrame(res.data)
-
+# =====================================================
+# UTILS
+# =====================================================
 def euro(x):
     return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
-# =========================
+def groupe_compte(compte: str) -> str:
+    if compte in {"6211", "6213", "6222", "6223"}:
+        return compte[:4]
+    return compte[:3]
+
+# =====================================================
 # SIDEBAR
-# =========================
+# =====================================================
 st.sidebar.title("Navigation")
 
 page = st.sidebar.radio(
@@ -52,112 +51,155 @@ page = st.sidebar.radio(
     ]
 )
 
-# =========================
-# FILTRE ANNÉE GLOBAL
-# =========================
 annee = st.sidebar.selectbox(
     "Année",
     [2023, 2024, 2025, 2026],
     index=2
 )
 
-# =========================
+# =====================================================
+# LOAD DATA (UNE FOIS)
+# =====================================================
+df_dep = pd.DataFrame(
+    supabase.table("depenses")
+    .select("id, annee, compte, montant_ttc")
+    .eq("annee", annee)
+    .execute()
+    .data
+)
+
+df_budget = pd.DataFrame(
+    supabase.table("budgets")
+    .select("annee, groupe_compte, budget")
+    .eq("annee", annee)
+    .execute()
+    .data
+)
+
+df_lots = pd.DataFrame(
+    supabase.table("lots")
+    .select("id, lot, tantiemes")
+    .execute()
+    .data
+)
+
+df_rep = pd.DataFrame(
+    supabase.table("repartition_depenses")
+    .select("depense_id, lot_id, quote_part")
+    .execute()
+    .data
+)
+
+# =====================================================
 # 📄 ÉTAT DES DÉPENSES
-# =========================
+# =====================================================
 if page == "📄 État des dépenses":
     st.title("📄 État des dépenses")
 
-    df = load_view("v_etat_depenses", {"annee": annee})
-
-    if df.empty:
+    if df_dep.empty:
         st.warning("Aucune dépense")
-        st.stop()
+    else:
+        st.metric("Total dépenses", euro(df_dep["montant_ttc"].sum()))
+        st.dataframe(df_dep, use_container_width=True)
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total dépenses", euro(df["montant_ttc"].sum()))
-    col2.metric("Nombre de lignes", len(df))
-    col3.metric("Dépense moyenne", euro(df["montant_ttc"].mean()))
-
-    st.dataframe(df, use_container_width=True)
-
-# =========================
+# =====================================================
 # 💰 BUDGET
-# =========================
-elif page == "💰 Budget":
+# =====================================================
+if page == "💰 Budget":
     st.title("💰 Budget")
 
-    df = load_view("budgets", {"annee": annee})
-
-    if df.empty:
+    if df_budget.empty:
         st.warning("Aucun budget")
-        st.stop()
+    else:
+        st.metric("Budget total", euro(df_budget["budget"].sum()))
+        st.dataframe(df_budget, use_container_width=True)
 
-    st.metric("Budget total", euro(df["montant"].sum()))
-    st.dataframe(df, use_container_width=True)
-
-# =========================
+# =====================================================
 # 📊 BUDGET VS RÉEL
-# =========================
-elif page == "📊 Budget vs Réel":
+# =====================================================
+if page == "📊 Budget vs Réel":
     st.title("📊 Budget vs Réel")
 
-    df = load_view("v_budget_vs_reel", {"annee": annee})
+    if df_dep.empty or df_budget.empty:
+        st.warning("Données insuffisantes")
+    else:
+        df_dep["groupe_compte"] = df_dep["compte"].astype(str).apply(groupe_compte)
 
-    if df.empty:
-        st.warning("Aucune donnée")
-        st.stop()
+        reel = (
+            df_dep
+            .groupby("groupe_compte", as_index=False)
+            .agg(reel=("montant_ttc", "sum"))
+        )
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Budget", euro(df["budget"].sum()))
-    col2.metric("Réel", euro(df["reel"].sum()))
-    col3.metric("Écart", euro(df["ecart"].sum()))
+        comp = (
+            df_budget
+            .groupby("groupe_compte", as_index=False)
+            .agg(budget=("budget", "sum"))
+            .merge(reel, on="groupe_compte", how="left")
+            .fillna(0)
+        )
 
-    st.dataframe(df, use_container_width=True)
+        comp["ecart"] = comp["reel"] - comp["budget"]
+        comp["ecart_pct"] = comp.apply(
+            lambda r: (r["ecart"] / r["budget"] * 100) if r["budget"] != 0 else 0,
+            axis=1
+        )
 
-# =========================
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Budget", euro(comp["budget"].sum()))
+        c2.metric("Réel", euro(comp["reel"].sum()))
+        c3.metric("Écart", euro(comp["ecart"].sum()))
+
+        st.dataframe(comp, use_container_width=True)
+
+# =====================================================
 # 📈 STATISTIQUES
-# =========================
-elif page == "📈 Statistiques":
+# =====================================================
+if page == "📈 Statistiques":
     st.title("📈 Statistiques")
 
-    df = load_view("v_statistiques", {"annee": annee})
+    if df_dep.empty:
+        st.warning("Aucune donnée")
+    else:
+        by_compte = (
+            df_dep
+            .groupby("compte", as_index=False)
+            .agg(total=("montant_ttc", "sum"))
+            .sort_values("total", ascending=False)
+        )
+        st.dataframe(by_compte, use_container_width=True)
 
-    if df.empty:
-        st.warning("Aucune statistique")
-        st.stop()
-
-    lot = st.selectbox("Lot", ["Tous"] + sorted(df["lot"].astype(str).unique()))
-    compte = st.selectbox("Compte", ["Tous"] + sorted(df["compte"].astype(str).unique()))
-
-    if lot != "Tous":
-        df = df[df["lot"].astype(str) == lot]
-
-    if compte != "Tous":
-        df = df[df["compte"].astype(str) == compte]
-
-    st.metric("Charges réelles", euro(df["charges_reelles"].sum()))
-    st.dataframe(df, use_container_width=True)
-
-# =========================
-# 🚨 CONTRÔLE RÉPARTITION
-# =========================
-elif page == "🚨 Contrôle de répartition":
+# =====================================================
+# 🚨 CONTRÔLE DE RÉPARTITION
+# =====================================================
+if page == "🚨 Contrôle de répartition":
     st.title("🚨 Contrôle de répartition")
 
-    df = load_view("v_controle_repartition")
-
-    if df.empty:
-        st.warning("Aucune anomalie")
-        st.stop()
-
-    anomalies = df[df["ecart"].abs() > 0.01]
-
-    col1, col2 = st.columns(2)
-    col1.metric("Dépenses", euro(df["montant_depense"].sum()))
-    col2.metric("Écart total", euro(df["ecart"].sum()))
-
-    if anomalies.empty:
-        st.success("✅ Toutes les dépenses sont correctement réparties")
+    if df_dep.empty or df_rep.empty:
+        st.warning("Données insuffisantes")
     else:
-        st.error(f"❌ {len(anomalies)} anomalies détectées")
-        st.dataframe(anomalies, use_container_width=True)
+        ctrl = (
+            df_rep
+            .merge(df_dep, left_on="depense_id", right_on="id", how="left")
+        )
+
+        ctrl["montant_reparti"] = ctrl["montant_ttc"] * ctrl["quote_part"] / BASE_TANTIEMES
+
+        check = (
+            ctrl
+            .groupby("depense_id", as_index=False)
+            .agg(
+                montant=("montant_ttc", "first"),
+                reparti=("montant_reparti", "sum")
+            )
+        )
+
+        check["ecart"] = check["montant"] - check["reparti"]
+
+        anomalies = check[check["ecart"].abs() > 0.01]
+
+        if anomalies.empty:
+            st.success("Toutes les dépenses sont correctement réparties")
+        else:
+            st.error(f"{len(anomalies)} anomalie(s)")
+            st.dataframe(anomalies, use_container_width=True)
