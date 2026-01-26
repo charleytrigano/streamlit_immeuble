@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
+import os
 
 # =========================
 # CONFIG
@@ -10,190 +11,146 @@ st.set_page_config(
     layout="wide"
 )
 
-# =========================
-# SUPABASE
-# =========================
-@st.cache_resource
-def get_supabase():
-    return create_client(
-        st.secrets["SUPABASE_URL"],
-        st.secrets["SUPABASE_ANON_KEY"]
-    )
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_KEY"]
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # =========================
-# MAIN
+# UTILS
 # =========================
-def main():
-    supabase = get_supabase()
-
-    # =========================
-    # FILTRES
-    # =========================
-    st.sidebar.title("Filtres")
-
-    annee = st.sidebar.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
-
-    # =========================
-    # LOTS
-    # =========================
-    df_lots = pd.DataFrame(
-        supabase.table("lots")
-        .select("id, lot, tantiemes")
-        .execute()
-        .data
-    )
-
-    if df_lots.empty:
-        st.error("Aucun lot trouvé")
-        return
-
-    df_lots["lot"] = df_lots["lot"].astype(str)
-
-    lot_filtre = st.sidebar.selectbox(
-        "Lot",
-        ["Tous"] + sorted(df_lots["lot"].unique())
-    )
-
-    # =========================
-    # DÉPENSES
-    # =========================
-    df_dep = pd.DataFrame(
-        supabase.table("depenses")
-        .select("id, montant_ttc, compte, annee")
-        .eq("annee", annee)
-        .execute()
-        .data
-    )
-
-    if df_dep.empty:
-        st.warning("Aucune dépense pour cette année")
-        return
-
-    df_dep["compte"] = df_dep["compte"].fillna("Non renseigné")
-
-    compte_filtre = st.sidebar.selectbox(
-        "Compte",
-        ["Tous"] + sorted(df_dep["compte"].unique())
-    )
-
-    # =========================
-    # RÉPARTITION
-    # =========================
-    df_rep = pd.DataFrame(
-        supabase.table("repartition_depenses")
-        .select("depense_id, lot_id, quote_part")
-        .execute()
-        .data
-    )
-
-    if df_rep.empty:
-        st.error("Aucune répartition trouvée")
-        return
-
-    # =========================
-    # CONTRÔLE DE COHÉRENCE (OBLIGATOIRE)
-    # =========================
-    controle = (
-        df_rep.groupby("depense_id", as_index=False)
-        .agg(total_quote=("quote_part", "sum"))
-    )
-
-    anomalies = controle[~controle["total_quote"].between(0.999, 1.001)]
-
-    if not anomalies.empty:
-        st.error("❌ Certaines dépenses ne sont PAS réparties à 100 %")
-        st.dataframe(anomalies)
-        return
-
-    # =========================
-    # MERGE GLOBAL
-    # =========================
-    df = (
-        df_rep
-        .merge(df_dep, left_on="depense_id", right_on="id", how="left")
-        .merge(df_lots, left_on="lot_id", right_on="id", how="left", suffixes=("", "_lot"))
-    )
-
-    if compte_filtre != "Tous":
-        df = df[df["compte"] == compte_filtre]
-
-    if lot_filtre != "Tous":
-        df = df[df["lot"] == lot_filtre]
-
-    # =========================
-    # CALCUL DES CHARGES RÉELLES (CORRECT)
-    # =========================
-    df["charge_reelle"] = df["montant_ttc"] * df["quote_part"]
-
-    charges_lot = (
-        df.groupby("lot", as_index=False)
-        .agg(charges_reelles=("charge_reelle", "sum"))
-    )
-
-    # =========================
-    # BUDGET
-    # =========================
-    df_budget = pd.DataFrame(
-        supabase.table("budgets")
-        .select("montant")
-        .eq("annee", annee)
-        .execute()
-        .data
-    )
-
-    budget_total = df_budget["montant"].sum() if not df_budget.empty else 0
-
-    df_lots["appel_fonds"] = (
-        budget_total * df_lots["tantiemes"] / df_lots["tantiemes"].sum()
-    )
-
-    if lot_filtre != "Tous":
-        df_lots = df_lots[df_lots["lot"] == lot_filtre]
-
-    # =========================
-    # TABLEAU FINAL
-    # =========================
-    final = (
-        df_lots[["lot", "appel_fonds"]]
-        .merge(charges_lot, on="lot", how="left")
-        .fillna(0)
-    )
-
-    final["ecart"] = final["charges_reelles"] - final["appel_fonds"]
-
-    # =========================
-    # UI
-    # =========================
-    st.title("🏢 Pilotage des charges de l’immeuble")
-    st.subheader("Charges par lot — Réel vs Budget")
-
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("Charges réelles totales", f"{final['charges_reelles'].sum():,.2f} €")
-    col2.metric("Appels de fonds totaux", f"{final['appel_fonds'].sum():,.2f} €")
-    col3.metric("Régularisation globale", f"{final['ecart'].sum():,.2f} €")
-
-    st.markdown("### 📋 Régularisation par lot")
-    st.dataframe(final, use_container_width=True)
-
-    # =========================
-    # DÉTAIL PAR COMPTE
-    # =========================
-    st.markdown("### 📊 Détail des dépenses par compte")
-
-    dep_compte = (
-        df.groupby("compte", as_index=False)
-        .agg(
-            montant_facture=("montant_ttc", "sum"),
-            charges_reparties=("charge_reelle", "sum")
-        )
-        .sort_values("charges_reparties", ascending=False)
-    )
-
-    st.dataframe(dep_compte, use_container_width=True)
+def load_table(table, filters=None):
+    q = supabase.table(table).select("*")
+    if filters:
+        for k, v in filters.items():
+            q = q.eq(k, v)
+    return pd.DataFrame(q.execute().data)
 
 # =========================
-# RUN
+# SIDEBAR – FILTRES
 # =========================
-if __name__ == "__main__":
-    main()
+st.sidebar.header("Filtres")
+
+annees = (
+    supabase.table("budgets")
+    .select("annee")
+    .execute()
+    .data
+)
+annees = sorted({a["annee"] for a in annees})
+
+annee = st.sidebar.selectbox("Année", annees)
+
+# =========================
+# TITRE
+# =========================
+st.title("🏢 Pilotage des charges de l’immeuble")
+
+# =========================
+# 1️⃣ ÉTAT DES DÉPENSES
+# =========================
+st.subheader("📋 État des dépenses")
+
+df_depenses = load_table("depenses", {"annee": annee})
+
+st.metric(
+    "Total dépenses enregistrées",
+    f"{df_depenses['montant_ttc'].sum():,.2f} €"
+)
+
+st.dataframe(
+    df_depenses.sort_values("date", ascending=False),
+    use_container_width=True
+)
+
+# =========================
+# 2️⃣ BUDGET
+# =========================
+st.subheader("💰 Budget")
+
+df_budget = load_table("budgets", {"annee": annee})
+
+budget_total = df_budget["budget"].sum()
+
+st.metric(
+    "Budget total voté",
+    f"{budget_total:,.2f} €"
+)
+
+st.dataframe(df_budget, use_container_width=True)
+
+# =========================
+# 3️⃣ BUDGET VS RÉEL
+# =========================
+st.subheader("📊 Budget vs Réel")
+
+df_bvr = load_table("v_budget_vs_reel", {"annee": annee})
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric(
+        "Appels de fonds",
+        f"{df_bvr['appel_fonds'].sum():,.2f} €"
+    )
+
+with col2:
+    st.metric(
+        "Charges réelles",
+        f"{df_bvr['charges_reelles'].sum():,.2f} €"
+    )
+
+with col3:
+    st.metric(
+        "Régularisation globale",
+        f"{df_bvr['regularisation'].sum():,.2f} €"
+    )
+
+st.dataframe(
+    df_bvr.sort_values("lot"),
+    use_container_width=True
+)
+
+# =========================
+# 4️⃣ STATISTIQUES
+# =========================
+st.subheader("📈 Statistiques")
+
+stats = pd.DataFrame({
+    "Indicateur": [
+        "Nombre de dépenses",
+        "Charge moyenne par lot",
+        "Lot le plus chargé",
+        "Lot le moins chargé",
+    ],
+    "Valeur": [
+        len(df_depenses),
+        round(df_bvr["charges_reelles"].mean(), 2),
+        df_bvr.loc[df_bvr["charges_reelles"].idxmax(), "lot"],
+        df_bvr.loc[df_bvr["charges_reelles"].idxmin(), "lot"],
+    ]
+})
+
+st.dataframe(stats, use_container_width=True)
+
+# =========================
+# 5️⃣ CONTRÔLE DES RÉPARTITIONS
+# =========================
+st.subheader("🛑 Contrôle des répartitions")
+
+controle = (
+    supabase
+    .rpc(
+        "controle_repartition_depenses",
+        {"p_annee": annee}
+    )
+    .execute()
+    .data
+)
+
+df_controle = pd.DataFrame(controle)
+
+if len(df_controle) == 0:
+    st.success("✅ Toutes les dépenses sont réparties à 100 %")
+else:
+    st.error("❌ Certaines dépenses ne sont PAS réparties à 100 %")
+    st.dataframe(df_controle, use_container_width=True)
