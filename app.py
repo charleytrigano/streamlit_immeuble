@@ -1,25 +1,29 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
-import os
 
 # =========================
-# CONFIG
+# CONFIG STREAMLIT
 # =========================
 st.set_page_config(
     page_title="Pilotage des charges de l’immeuble",
     layout="wide"
 )
 
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_KEY = os.environ["SUPABASE_KEY"]
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# =========================
+# SUPABASE
+# =========================
+@st.cache_resource
+def get_supabase():
+    return create_client(
+        st.secrets["SUPABASE_URL"],
+        st.secrets["SUPABASE_ANON_KEY"]
+    )
 
-# =========================
-# UTILS
-# =========================
-def load_table(table, filters=None):
-    q = supabase.table(table).select("*")
+supabase = get_supabase()
+
+def load_view(view_name, filters=None):
+    q = supabase.table(view_name).select("*")
     if filters:
         for k, v in filters.items():
             q = q.eq(k, v)
@@ -28,129 +32,119 @@ def load_table(table, filters=None):
 # =========================
 # SIDEBAR – FILTRES
 # =========================
-st.sidebar.header("Filtres")
+st.sidebar.title("Filtres")
 
-annees = (
-    supabase.table("budgets")
-    .select("annee")
-    .execute()
-    .data
+annee = st.sidebar.selectbox(
+    "Année",
+    [2023, 2024, 2025, 2026],
+    index=2
 )
-annees = sorted({a["annee"] for a in annees})
-
-annee = st.sidebar.selectbox("Année", annees)
 
 # =========================
 # TITRE
 # =========================
 st.title("🏢 Pilotage des charges de l’immeuble")
 
-# =========================
+# ======================================================
 # 1️⃣ ÉTAT DES DÉPENSES
-# =========================
-st.subheader("📋 État des dépenses")
+# ======================================================
+st.header("📄 État des dépenses")
 
-df_depenses = load_table("depenses", {"annee": annee})
+df_dep = load_view("v_etat_depenses", {"annee": annee})
 
-st.metric(
-    "Total dépenses enregistrées",
-    f"{df_depenses['montant_ttc'].sum():,.2f} €"
-)
+if df_dep.empty:
+    st.info("Aucune dépense pour cette année.")
+else:
+    st.dataframe(df_dep, use_container_width=True)
 
-st.dataframe(
-    df_depenses.sort_values("date", ascending=False),
-    use_container_width=True
-)
+# ======================================================
+# 2️⃣ CONTRÔLE DE RÉPARTITION
+# ======================================================
+st.header("🚨 Contrôle de répartition")
 
-# =========================
-# 2️⃣ BUDGET
-# =========================
-st.subheader("💰 Budget")
+df_ctrl = load_view("v_controle_repartition")
 
-df_budget = load_table("budgets", {"annee": annee})
-
-budget_total = df_budget["budget"].sum()
-
-st.metric(
-    "Budget total voté",
-    f"{budget_total:,.2f} €"
-)
-
-st.dataframe(df_budget, use_container_width=True)
-
-# =========================
-# 3️⃣ BUDGET VS RÉEL
-# =========================
-st.subheader("📊 Budget vs Réel")
-
-df_bvr = load_table("v_budget_vs_reel", {"annee": annee})
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.metric(
-        "Appels de fonds",
-        f"{df_bvr['appel_fonds'].sum():,.2f} €"
-    )
-
-with col2:
-    st.metric(
-        "Charges réelles",
-        f"{df_bvr['charges_reelles'].sum():,.2f} €"
-    )
-
-with col3:
-    st.metric(
-        "Régularisation globale",
-        f"{df_bvr['regularisation'].sum():,.2f} €"
-    )
-
-st.dataframe(
-    df_bvr.sort_values("lot"),
-    use_container_width=True
-)
-
-# =========================
-# 4️⃣ STATISTIQUES
-# =========================
-st.subheader("📈 Statistiques")
-
-stats = pd.DataFrame({
-    "Indicateur": [
-        "Nombre de dépenses",
-        "Charge moyenne par lot",
-        "Lot le plus chargé",
-        "Lot le moins chargé",
-    ],
-    "Valeur": [
-        len(df_depenses),
-        round(df_bvr["charges_reelles"].mean(), 2),
-        df_bvr.loc[df_bvr["charges_reelles"].idxmax(), "lot"],
-        df_bvr.loc[df_bvr["charges_reelles"].idxmin(), "lot"],
-    ]
-})
-
-st.dataframe(stats, use_container_width=True)
-
-# =========================
-# 5️⃣ CONTRÔLE DES RÉPARTITIONS
-# =========================
-st.subheader("🛑 Contrôle des répartitions")
-
-controle = (
-    supabase
-    .rpc(
-        "controle_repartition_depenses",
-        {"p_annee": annee}
-    )
-    .execute()
-    .data
-)
-
-df_controle = pd.DataFrame(controle)
-
-if len(df_controle) == 0:
+if df_ctrl.empty:
     st.success("✅ Toutes les dépenses sont réparties à 100 %")
 else:
     st.error("❌ Certaines dépenses ne sont PAS réparties à 100 %")
-    st.dataframe(df_controle, use_container_width=True)
+    st.dataframe(df_ctrl, use_container_width=True)
+
+# ======================================================
+# 3️⃣ BUDGET
+# ======================================================
+st.header("💰 Budget")
+
+df_budget = load_view("v_budget", {"annee": annee})
+
+if df_budget.empty:
+    st.warning("Aucun budget défini pour cette année.")
+    budget_total = 0
+else:
+    budget_total = df_budget.iloc[0]["budget_total"]
+    st.metric(
+        "Budget total",
+        f"{budget_total:,.2f} €".replace(",", " ").replace(".", ",")
+    )
+
+# ======================================================
+# 4️⃣ BUDGET VS RÉEL
+# ======================================================
+st.header("📊 Budget vs Réel")
+
+df_bvr = load_view("v_budget_vs_reel", {"annee": annee})
+
+if not df_bvr.empty:
+    charges_reelles = df_bvr.iloc[0]["charges_reelles"]
+    charges_reparties = df_bvr.iloc[0]["charges_reparties"]
+else:
+    charges_reelles = 0
+    charges_reparties = 0
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric(
+    "Charges réelles",
+    f"{charges_reelles:,.2f} €".replace(",", " ").replace(".", ",")
+)
+
+col2.metric(
+    "Charges réparties",
+    f"{charges_reparties:,.2f} €".replace(",", " ").replace(".", ",")
+)
+
+col3.metric(
+    "Écart budget / réel",
+    f"{(charges_reelles - budget_total):,.2f} €".replace(",", " ").replace(".", ",")
+)
+
+# ======================================================
+# 5️⃣ STATISTIQUES
+# ======================================================
+st.header("📈 Statistiques")
+
+if not df_dep.empty:
+    stats = pd.DataFrame({
+        "Indicateur": [
+            "Nombre de dépenses",
+            "Montant total facturé",
+            "Montant réparti"
+        ],
+        "Valeur": [
+            len(df_dep),
+            df_dep["montant_ttc"].sum(),
+            (df_dep["montant_ttc"] * df_dep["total_quote_part"]).sum()
+        ]
+    })
+
+    stats["Valeur"] = stats["Valeur"].apply(
+        lambda x: f"{x:,.2f} €".replace(",", " ").replace(".", ",")
+        if isinstance(x, float) else x
+    )
+
+    st.dataframe(stats, use_container_width=True)
+
+# =========================
+# FIN
+# =========================
+st.caption("Données issues exclusivement de Supabase – aucune correction silencieuse.")
