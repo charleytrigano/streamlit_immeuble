@@ -59,7 +59,7 @@ onglet = st.sidebar.radio(
 # ======================
 df_dep = load_table("depenses")
 df_plan = load_table("plan_comptable")
-df_bud = load_table("budget")
+df_bud = load_table("budgets")
 
 df_dep = df_dep[df_dep["annee"] == annee]
 
