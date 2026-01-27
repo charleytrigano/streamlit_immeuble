@@ -19,20 +19,18 @@ st.set_page_config(page_title="Pilotage des charges", layout="wide")
 # =========================
 
 def euro(val):
-    if val is None:
+    if val is None or pd.isna(val):
         return "0 €"
     return f"{val:,.2f} €".replace(",", " ").replace(".", ",")
 
 
-def load_table(table_name):
-    res = supabase.table(table_name).select("*").execute()
-    if not res.data:
-        return pd.DataFrame()
-    return pd.DataFrame(res.data)
+def load_table(name):
+    res = supabase.table(name).select("*").execute()
+    return pd.DataFrame(res.data) if res.data else pd.DataFrame()
 
 
 # =========================
-# APP
+# MAIN
 # =========================
 
 def main():
@@ -53,58 +51,55 @@ def main():
     # METRICS
     # =========================
 
-    total_depenses = df_dep["montant_ttc"].sum()
-
     col1, col2 = st.columns(2)
-    col1.metric("💸 Total des dépenses", euro(total_depenses))
+    col1.metric("💸 Total des dépenses", euro(df_dep["montant_ttc"].sum()))
     col2.metric("🧾 Nombre de dépenses", len(df_dep))
 
     st.divider()
 
     # =========================
-    # JOIN AVEC LOTS
+    # MERGE CORRECT (clé réelle)
     # =========================
 
-    df_display = df_dep.merge(
+    df = df_dep.merge(
         df_lots,
-        left_on="lot_id",
-        right_on="id",
+        on="lot_id",          # ✅ clé réelle des deux tables
         how="left",
         suffixes=("", "_lot")
     )
 
     # =========================
-    # LIEN FACTURE
+    # FACTURE LINK
     # =========================
 
-    def build_facture_link(row):
+    def facture_link(row):
         if pd.notna(row.get("pdf_url")):
             return f"[📄 Voir]({row['pdf_url']})"
         if pd.notna(row.get("facture_url")):
             return f"[📄 Voir]({row['facture_url']})"
         return ""
 
-    df_display["facture"] = df_display.apply(build_facture_link, axis=1)
+    df["facture"] = df.apply(facture_link, axis=1)
 
     # =========================
-    # TABLE FINALE
+    # TABLE AFFICHÉE
     # =========================
 
-    columns = [
-        "date",
-        "poste",
-        "fournisseur",
-        "compte",
-        "type",
-        "montant_ttc",
-        "lot",
-        "batiment",
-        "tantiemes",
-        "commentaire",
-        "facture",
-    ]
-
-    df_display = df_display[columns].sort_values("date", ascending=False)
+    df_display = df[
+        [
+            "date",
+            "poste",
+            "fournisseur",
+            "compte",
+            "type",
+            "montant_ttc",
+            "lot",
+            "batiment",
+            "tantiemes",
+            "commentaire",
+            "facture",
+        ]
+    ].sort_values("date", ascending=False)
 
     st.subheader("📋 Détail des dépenses")
 
