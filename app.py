@@ -1,406 +1,233 @@
-import io
-import uuid
-from datetime import date
-
-import pandas as pd
 import streamlit as st
+import pandas as pd
 from supabase import create_client
-
 
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(page_title="Pilotage des charges - Dépenses", layout="wide")
+BASE_TANTIEMES = 10_000
 
+st.set_page_config(
+    page_title="Pilotage des charges",
+    layout="wide"
+)
 
 # =========================
 # SUPABASE
 # =========================
 @st.cache_resource
 def get_supabase():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_ANON_KEY"]
-    return create_client(url, key)
-
-
-supabase = get_supabase()
-
-
-# =========================
-# HELPERS
-# =========================
-def euro(x: float | int | None) -> str:
-    if x is None:
-        x = 0
-    return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
-
-
-def get_facture_public_url(path: str | None) -> str | None:
-    """Retourne l'URL publique de la facture (ou None)."""
-    if not path:
-        return None
-    try:
-        return supabase.storage.from_("factures").get_public_url(path)
-    except Exception:
-        return None
-
-
-def upload_facture(annee: int, depense_id: str, uploaded_file) -> str | None:
-    """
-    Envoie la facture dans le bucket 'factures' et renvoie le chemin (facture_path)
-    stocké dans la table depenses.
-    """
-    if uploaded_file is None:
-        return None
-
-    ext = uploaded_file.name.split(".")[-1].lower()
-    # chemin logique dans le bucket : 2025/<depense_id>_<uuid>.ext
-    file_path = f"{annee}/{depense_id}_{uuid.uuid4().hex}.{ext}"
-
-    file_bytes = uploaded_file.getvalue()
-    file_obj = io.BytesIO(file_bytes)
-
-    try:
-        supabase.storage.from_("factures").upload(
-            file_path,
-            file_obj,
-            {"cache-control": "3600", "upsert": "true"},
-        )
-        return file_path
-    except Exception as e:
-        st.error(f"Erreur lors de l'upload de la facture : {e}")
-        return None
-
-
-# =========================
-# SIDEBAR — FILTRES
-# =========================
-st.sidebar.title("Filtres")
-
-annee = st.sidebar.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
-
-st.title("🏢 Pilotage des charges de l’immeuble")
-st.markdown("## 📄 État des dépenses")
-
-
-# =========================
-# CHARGEMENT DES DÉPENSES
-# =========================
-try:
-    res = (
-        supabase.table("depenses")
-        .select("*")
-        .eq("annee", annee)
-        .order("date")
-        .execute()
-    )
-    depenses_data = res.data or []
-except Exception as e:
-    st.error(f"Erreur Supabase lors du chargement des dépenses : {e}")
-    depenses_data = []
-
-df = pd.DataFrame(depenses_data)
-
-# On s'assure que certaines colonnes existent au moins vides
-for col in [
-    "date",
-    "compte",
-    "poste",
-    "fournisseur",
-    "montant_ttc",
-    "commentaire",
-    "facture_path",
-]:
-    if col not in df.columns:
-        df[col] = None
-
-# Types
-df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce").fillna(0.0)
-
-# Colonne lien facture (Markdown cliquable)
-df["facture"] = df["facture_path"].apply(
-    lambda p: f"[📄 Voir]({get_facture_public_url(p)})" if p else ""
-)
-
-# =========================
-# FILTRE PAR POSTE (AVANCÉ)
-# =========================
-st.sidebar.markdown("### Filtres avancés")
-
-if df.empty:
-    poste_filtre = "Tous"
-else:
-    postes_uniques = sorted(
-        [p for p in df["poste"].dropna().unique().tolist() if str(p).strip() != ""]
-    )
-    poste_filtre = st.sidebar.selectbox(
-        "Poste", ["Tous"] + postes_uniques
+    return create_client(
+        st.secrets["SUPABASE_URL"],
+        st.secrets["SUPABASE_ANON_KEY"]
     )
 
-# Application du filtre poste
-if poste_filtre != "Tous":
-    df = df[df["poste"] == poste_filtre]
-
+# =========================
+# FORMAT €
+# =========================
+def euro(v):
+    return f"{v:,.2f} €".replace(",", " ").replace(".", ",")
 
 # =========================
-# KPI FIABLES
+# MAIN
 # =========================
-st.markdown("### 🔎 Synthèse des charges réelles")
+def main():
+    supabase = get_supabase()
 
-if df.empty:
-    st.info(f"Aucune dépense pour l'année {annee} avec ces filtres.")
-    total = 0.0
-    n = 0
-    moy = 0.0
-    mt_avec = 0.0
-    mt_sans = 0.0
-else:
-    total = df["montant_ttc"].sum()
-    n = len(df)
-    moy = total / n if n > 0 else 0.0
-    mask_avec = df["facture_path"].notna() & (df["facture_path"] != "")
-    mt_avec = df.loc[mask_avec, "montant_ttc"].sum()
-    mt_sans = df.loc[~mask_avec, "montant_ttc"].sum()
+    # =========================
+    # SIDEBAR
+    # =========================
+    st.sidebar.title("Navigation")
 
-col1, col2, col3, col4 = st.columns(4)
-
-col1.metric("Total charges réelles", euro(total))
-col2.metric("Nombre de lignes", f"{n}")
-col3.metric("Charge moyenne / ligne", euro(moy))
-col4.metric("Montant sans facture", euro(mt_sans))
-
-st.caption(
-    f"Montant avec facture : **{euro(mt_avec)}** / Montant sans facture : **{euro(mt_sans)}**"
-)
-
-st.markdown("---")
-
-
-# =========================
-# DÉPENSES PAR POSTE (SYNTHÈSE)
-# =========================
-st.markdown("### 📊 Synthèse par poste")
-
-if df.empty:
-    st.info("Aucune dépense à afficher par poste.")
-else:
-    df_poste = (
-        df.groupby("poste", as_index=False)
-        .agg(
-            montant_total=("montant_ttc", "sum"),
-            nb_lignes=("id", "count") if "id" in df.columns else ("montant_ttc", "count"),
-        )
-        .sort_values("montant_total", ascending=False)
+    page = st.sidebar.radio(
+        "Aller à",
+        [
+            "📄 État des dépenses",
+            "💰 Budget",
+            "📊 Budget vs Réel",
+            "📈 Statistiques",
+            "✅ Contrôle de répartition",
+        ]
     )
 
-    st.dataframe(
-        df_poste.rename(
-            columns={
-                "poste": "Poste",
-                "montant_total": "Montant total (€)",
-                "nb_lignes": "Nombre de lignes",
-            }
-        ),
-        use_container_width=True,
-    )
+    # =========================
+    # 📄 ÉTAT DES DÉPENSES
+    # =========================
+    if page == "📄 État des dépenses":
+        st.title("📄 État des dépenses")
 
-st.markdown("---")
+        annee = st.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
 
-
-# =========================
-# TABLEAU DÉTAILLÉ DES DÉPENSES
-# =========================
-st.markdown("### 📋 Détails des dépenses")
-
-if df.empty:
-    st.info(f"Aucune dépense pour l'année {annee} avec ces filtres.")
-else:
-    colonnes_affichage = [
-        "date",
-        "compte",
-        "poste",
-        "fournisseur",
-        "montant_ttc",
-        "commentaire",
-        "facture",
-    ]
-
-    st.dataframe(
-        df[colonnes_affichage].rename(
-            columns={
-                "date": "Date",
-                "compte": "Compte",
-                "poste": "Poste",
-                "fournisseur": "Fournisseur",
-                "montant_ttc": "Montant TTC",
-                "commentaire": "Commentaire",
-                "facture": "Facture",
-            }
-        ),
-        use_container_width=True,
-    )
-
-st.markdown("---")
-
-
-# =========================
-# FORMULAIRE – AJOUTER
-# =========================
-st.subheader("➕ Ajouter une dépense")
-
-with st.form("form_ajout"):
-    col_a, col_b, col_c = st.columns(3)
-    col_d, col_e = st.columns(2)
-
-    date_dep = col_a.date_input("Date", value=date.today())
-    compte_dep = col_b.text_input("Compte")
-    poste_dep = col_c.text_input("Poste")
-    fournisseur_dep = col_d.text_input("Fournisseur")
-    montant_dep = col_e.number_input("Montant TTC", min_value=0.0, step=0.01)
-    commentaire_dep = st.text_input("Commentaire", value="", placeholder="Optionnel")
-    fichier_dep = st.file_uploader("Facture (PDF, JPG, PNG…)", type=None)
-
-    submitted_ajout = st.form_submit_button("Enregistrer la dépense")
-
-if submitted_ajout:
-    try:
-        # 1) créer la dépense pour obtenir son id
-        insert_res = (
-            supabase.table("depenses")
-            .insert(
-                {
-                    "annee": annee,
-                    "date": str(date_dep),
-                    "compte": compte_dep,
-                    "poste": poste_dep,
-                    "fournisseur": fournisseur_dep,
-                    "montant_ttc": float(montant_dep),
-                    "commentaire": commentaire_dep,
-                    # on mettra facture_path à jour après upload
-                }
-            )
+        resp = (
+            supabase
+            .table("depenses")
+            .select("*")
+            .eq("annee", annee)
             .execute()
         )
-        new_rows = insert_res.data or []
-        if not new_rows:
-            st.error("Insertion échouée (aucune ligne retournée).")
+
+        df = pd.DataFrame(resp.data)
+
+        if df.empty:
+            st.info("Aucune dépense.")
         else:
-            new_dep = new_rows[0]
-            dep_id = new_dep["id"]
+            df["facture"] = df["facture_url"].apply(
+                lambda x: f"[📄 Ouvrir]({x})" if x else ""
+            )
 
-            facture_path = upload_facture(annee, dep_id, fichier_dep)
-            if facture_path:
-                supabase.table("depenses").update(
-                    {"facture_path": facture_path}
-                ).eq("id", dep_id).execute()
+            st.dataframe(
+                df[[
+                    "date",
+                    "compte",
+                    "poste",
+                    "fournisseur",
+                    "montant_ttc",
+                    "commentaire",
+                    "facture"
+                ]],
+                use_container_width=True
+            )
 
-            st.success("Dépense ajoutée avec succès.")
-            st.experimental_rerun()
-    except Exception as e:
-        st.error(f"Erreur Supabase lors de l'ajout : {e}")
+        # -------------------------
+        # AJOUT
+        # -------------------------
+        with st.expander("➕ Ajouter une dépense"):
+            with st.form("add_depense"):
+                date = st.date_input("Date")
+                compte = st.text_input("Compte")
+                poste = st.text_input("Poste")
+                fournisseur = st.text_input("Fournisseur")
+                montant = st.number_input("Montant TTC", value=0.0)
+                commentaire = st.text_input("Commentaire")
+                facture_url = st.text_input("Lien facture (optionnel)")
 
+                if st.form_submit_button("Enregistrer"):
+                    supabase.table("depenses").insert({
+                        "date": str(date),
+                        "annee": date.year,
+                        "compte": compte,
+                        "poste": poste,
+                        "fournisseur": fournisseur,
+                        "montant_ttc": montant,
+                        "commentaire": commentaire,
+                        "facture_url": facture_url
+                    }).execute()
+                    st.success("Dépense ajoutée")
+                    st.rerun()
 
-st.markdown("---")
+    # =========================
+    # 💰 BUDGET
+    # =========================
+    elif page == "💰 Budget":
+        st.title("💰 Budget")
+
+        annee = st.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
+
+        bud = (
+            supabase
+            .table("budgets")
+            .select("*")
+            .eq("annee", annee)
+            .execute()
+        )
+
+        df = pd.DataFrame(bud.data)
+
+        if not df.empty:
+            st.metric("Budget total", euro(df["montant"].sum()))
+            st.dataframe(df[["compte", "montant"]], use_container_width=True)
+        else:
+            st.info("Aucun budget")
+
+    # =========================
+    # 📊 BUDGET VS RÉEL
+    # =========================
+    elif page == "📊 Budget vs Réel":
+        st.title("📊 Budget vs Réel")
+
+        annee = st.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
+
+        dep = pd.DataFrame(
+            supabase.table("depenses").select("compte, montant_ttc").eq("annee", annee).execute().data
+        )
+        bud = pd.DataFrame(
+            supabase.table("budgets").select("compte, montant").eq("annee", annee).execute().data
+        )
+
+        if dep.empty or bud.empty:
+            st.warning("Données manquantes")
+            return
+
+        dep_g = dep.groupby("compte", as_index=False)["montant_ttc"].sum()
+        df = bud.merge(dep_g, on="compte", how="left").fillna(0)
+
+        df["écart"] = df["montant_ttc"] - df["montant"]
+
+        st.dataframe(
+            df.rename(columns={
+                "montant": "Budget",
+                "montant_ttc": "Réel"
+            }),
+            use_container_width=True
+        )
+
+    # =========================
+    # 📈 STATISTIQUES
+    # =========================
+    elif page == "📈 Statistiques":
+        st.title("📈 Statistiques")
+
+        dep = pd.DataFrame(
+            supabase.table("depenses").select("poste, montant_ttc").execute().data
+        )
+
+        if dep.empty:
+            st.info("Pas de données")
+            return
+
+        st.dataframe(
+            dep.groupby("poste", as_index=False)
+            .agg(total=("montant_ttc", "sum"))
+            .sort_values("total", ascending=False),
+            use_container_width=True
+        )
+
+    # =========================
+    # ✅ CONTRÔLE RÉPARTITION
+    # =========================
+    elif page == "✅ Contrôle de répartition":
+        st.title("✅ Contrôle de répartition")
+
+        dep = pd.DataFrame(
+            supabase.table("depenses").select("id, montant_ttc").execute().data
+        )
+        rep = pd.DataFrame(
+            supabase.table("repartition_depenses").select("depense_id, quote_part").execute().data
+        )
+
+        if dep.empty or rep.empty:
+            st.warning("Données manquantes")
+            return
+
+        rep_sum = (
+            rep.groupby("depense_id", as_index=False)
+            .agg(reparti=("quote_part", "sum"))
+        )
+
+        df = dep.merge(rep_sum, left_on="id", right_on="depense_id", how="left").fillna(0)
+        df["écart"] = df["montant_ttc"] - (df["montant_ttc"] * df["reparti"] / BASE_TANTIEMES)
+
+        anomalies = df[abs(df["écart"]) > 0.01]
+
+        if anomalies.empty:
+            st.success("Toutes les dépenses sont correctement réparties")
+        else:
+            st.error("Anomalies détectées")
+            st.dataframe(anomalies, use_container_width=True)
 
 
 # =========================
-# FORMULAIRE – MODIFIER
+# RUN
 # =========================
-st.subheader("✏️ Modifier une dépense")
-
-if df.empty:
-    st.info("Aucune dépense à modifier.")
-else:
-    # Liste lisible pour la sélection
-    df["label"] = df.apply(
-        lambda r: f"{r.get('date', '')} | {r.get('compte', '')} | "
-        f"{euro(r.get('montant_ttc', 0))} | {r.get('fournisseur', '')}",
-        axis=1,
-    )
-
-    row_map = {row["label"]: row for _, row in df.iterrows()}
-    choix = st.selectbox("Sélectionner une dépense", list(row_map.keys()))
-    row_sel = row_map[choix]
-    dep_id_edit = row_sel["id"]
-
-    with st.form("form_edit"):
-        col1, col2, col3 = st.columns(3)
-        col4, col5 = st.columns(2)
-
-        date_edit = col1.date_input(
-            "Date", value=pd.to_datetime(row_sel["date"]).date()
-        )
-        compte_edit = col2.text_input("Compte", value=row_sel["compte"] or "")
-        poste_edit = col3.text_input("Poste", value=row_sel["poste"] or "")
-        fournisseur_edit = col4.text_input(
-            "Fournisseur", value=row_sel["fournisseur"] or ""
-        )
-        montant_edit = col5.number_input(
-            "Montant TTC",
-            min_value=0.0,
-            step=0.01,
-            value=float(row_sel["montant_ttc"] or 0.0),
-        )
-        commentaire_edit = st.text_input(
-            "Commentaire", value=row_sel["commentaire"] or ""
-        )
-        fichier_edit = st.file_uploader(
-            "Remplacer la facture (laisser vide pour garder l'existante)",
-            type=None,
-            key="edit_upload",
-        )
-
-        submitted_edit = st.form_submit_button("Mettre à jour")
-
-    if submitted_edit:
-        try:
-            update_data = {
-                "date": str(date_edit),
-                "compte": compte_edit,
-                "poste": poste_edit,
-                "fournisseur": fournisseur_edit,
-                "montant_ttc": float(montant_edit),
-                "commentaire": commentaire_edit,
-            }
-
-            # Upload éventuel d'une nouvelle facture
-            if fichier_edit is not None:
-                new_path = upload_facture(annee, dep_id_edit, fichier_edit)
-                if new_path:
-                    update_data["facture_path"] = new_path
-
-            supabase.table("depenses").update(update_data).eq("id", dep_id_edit).execute()
-            st.success("Dépense mise à jour avec succès.")
-            st.experimental_rerun()
-        except Exception as e:
-            st.error(f"Erreur Supabase lors de la mise à jour : {e}")
-
-
-st.markdown("---")
-
-
-# =========================
-# SUPPRIMER
-# =========================
-st.subheader("🗑️ Supprimer une dépense")
-
-if df.empty:
-    st.info("Aucune dépense à supprimer.")
-else:
-    df["label_delete"] = df.apply(
-        lambda r: f"{r.get('date', '')} | {r.get('compte', '')} | "
-        f"{euro(r.get('montant_ttc', 0))} | {r.get('fournisseur', '')}",
-        axis=1,
-    )
-    map_delete = {row["label_delete"]: row for _, row in df.iterrows()}
-    choix_del = st.selectbox("Sélectionner une dépense à supprimer", list(map_delete.keys()))
-    row_del = map_delete[choix_del]
-    dep_id_del = row_del["id"]
-
-    if st.button("Confirmer la suppression", type="primary"):
-        try:
-            supabase.table("depenses").delete().eq("id", dep_id_del).execute()
-            st.success("Dépense supprimée.")
-            st.experimental_rerun()
-        except Exception as e:
-            st.error(f"Erreur Supabase lors de la suppression : {e}")
+if __name__ == "__main__":
+    main()
