@@ -101,10 +101,13 @@ except Exception as e:
 
 df = pd.DataFrame(depenses_data)
 
-# On s'assure que certaines colonnes existent au moins vide
+# On s'assure que certaines colonnes existent au moins vides
 for col in ["date", "compte", "fournisseur", "montant_ttc", "commentaire", "facture_path"]:
     if col not in df.columns:
         df[col] = None
+
+# Colonnes types
+df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce").fillna(0.0)
 
 # Colonne lien facture (Markdown cliquable)
 df["facture"] = df["facture_path"].apply(
@@ -113,8 +116,44 @@ df["facture"] = df["facture_path"].apply(
 
 
 # =========================
+# KPI FIABLES
+# =========================
+st.markdown("### 🔎 Synthèse des charges réelles")
+
+if df.empty:
+    st.info(f"Aucune dépense pour l'année {annee}.")
+    total = 0.0
+    n = 0
+    moy = 0.0
+    mt_avec = 0.0
+    mt_sans = 0.0
+else:
+    total = df["montant_ttc"].sum()
+    n = len(df)
+    moy = total / n if n > 0 else 0.0
+    mask_avec = df["facture_path"].notna() & (df["facture_path"] != "")
+    mt_avec = df.loc[mask_avec, "montant_ttc"].sum()
+    mt_sans = df.loc[~mask_avec, "montant_ttc"].sum()
+
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric("Total charges réelles", euro(total))
+col2.metric("Nombre de lignes", f"{n}")
+col3.metric("Charge moyenne / ligne", euro(moy))
+col4.metric("Montant sans facture", euro(mt_sans))
+
+st.caption(
+    f"Montant avec facture : **{euro(mt_avec)}** / Montant sans facture : **{euro(mt_sans)}**"
+)
+
+st.markdown("---")
+
+
+# =========================
 # TABLEAU DES DÉPENSES
 # =========================
+st.markdown("### 📋 Détails des dépenses")
+
 if df.empty:
     st.info(f"Aucune dépense pour l'année {annee}.")
 else:
@@ -140,11 +179,6 @@ else:
         ),
         use_container_width=True,
     )
-
-    st.caption(
-        f"Montant total {annee} : **{euro(df['montant_ttc'].fillna(0).sum())}**"
-    )
-
 
 st.markdown("---")
 
