@@ -2,17 +2,20 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 
-# =========================
+# =====================
 # CONFIG
-# =========================
+# =====================
 st.set_page_config(
     page_title="Pilotage des charges",
     layout="wide"
 )
 
-# =========================
+def euro(v):
+    return f"{v:,.2f} €".replace(",", " ").replace(".", ",")
+
+# =====================
 # SUPABASE
-# =========================
+# =====================
 @st.cache_resource
 def get_supabase():
     return create_client(
@@ -22,162 +25,138 @@ def get_supabase():
 
 supabase = get_supabase()
 
-# =========================
-# UTILS
-# =========================
-def safe_df(data):
-    return pd.DataFrame(data) if data else pd.DataFrame()
-
-def euro(x):
-    try:
-        return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
-    except Exception:
-        return "0,00 €"
-
-def load_table(name):
-    try:
-        return safe_df(
-            supabase.table(name).select("*").execute().data
-        )
-    except Exception:
-        return pd.DataFrame()
-
-# =========================
-# SIDEBAR – FILTRES
-# =========================
+# =====================
+# SIDEBAR
+# =====================
 st.sidebar.title("🔎 Filtres")
 
 annee = st.sidebar.selectbox(
     "Année",
-    ["Toutes", 2023, 2024, 2025, 2026],
-    index=0
+    [2023, 2024, 2025, 2026],
+    index=2
 )
 
-# =========================
-# DATA LOAD
-# =========================
-df_dep = load_table("depenses")
-df_bud = load_table("budgets")
-df_rep = load_table("repartition_depenses")
-
-# Filtre année (si colonne existe)
-if annee != "Toutes" and "annee" in df_dep.columns:
-    df_dep = df_dep[df_dep["annee"] == annee]
-
-# =========================
-# KPI GLOBAL
-# =========================
-st.title("📊 Pilotage des charges")
-
-col1, col2, col3 = st.columns(3)
-
-col1.metric(
-    "💸 Total des dépenses",
-    euro(df_dep["montant_ttc"].sum()) if "montant_ttc" in df_dep else "0,00 €"
+onglet = st.sidebar.radio(
+    "Navigation",
+    [
+        "📄 État des dépenses",
+        "💰 Budget",
+        "📊 Budget vs Réel",
+        "📈 Statistiques",
+        "✅ Contrôle répartition"
+    ]
 )
 
-col2.metric(
-    "🧾 Nombre de dépenses",
-    len(df_dep)
-)
+# =====================
+# ÉTAT DES DÉPENSES
+# =====================
+if onglet == "📄 État des dépenses":
+    df = pd.DataFrame(
+        supabase.table("v_etat_depenses")
+        .select("*")
+        .eq("annee", annee)
+        .execute()
+        .data
+    )
 
-col3.metric(
-    "💰 Budget total",
-    euro(df_bud["montant"].sum()) if "montant" in df_bud else "0,00 €"
-)
+    st.title("📄 État des dépenses")
 
-# =========================
-# TABS
-# =========================
-tabs = st.tabs([
-    "📄 État des dépenses",
-    "💰 Budget",
-    "📊 Budget vs Réel",
-    "📈 Statistiques",
-    "✅ Contrôle répartition"
-])
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total dépenses", euro(df["montant_ttc"].sum()))
+    col2.metric("Nombre de lignes", len(df))
+    col3.metric("Dépense moyenne", euro(df["montant_ttc"].mean()))
 
-# =========================
-# 1. ÉTAT DES DÉPENSES
-# =========================
-with tabs[0]:
-    st.subheader("📄 État des dépenses")
-
-    cols = [
-        c for c in [
+    st.dataframe(
+        df[[
             "date",
-            "annee",
             "compte",
             "poste",
             "fournisseur",
             "montant_ttc",
-            "commentaire"
-        ] if c in df_dep.columns
-    ]
+            "commentaire",
+            "facture_path"
+        ]],
+        use_container_width=True
+    )
 
-    if cols:
-        st.dataframe(
-            df_dep[cols].sort_values(cols[0], ascending=False),
-            use_container_width=True
-        )
+# =====================
+# BUDGET
+# =====================
+elif onglet == "💰 Budget":
+    df = pd.DataFrame(
+        supabase.table("budgets")
+        .select("*")
+        .eq("annee", annee)
+        .execute()
+        .data
+    )
+
+    st.title("💰 Budget")
+
+    st.metric("Budget total", euro(df["montant"].sum()))
+
+    st.dataframe(df, use_container_width=True)
+
+# =====================
+# BUDGET VS RÉEL
+# =====================
+elif onglet == "📊 Budget vs Réel":
+    df = pd.DataFrame(
+        supabase.table("v_budget_vs_reel")
+        .select("*")
+        .eq("annee", annee)
+        .execute()
+        .data
+    )
+
+    st.title("📊 Budget vs Réel")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Budget", euro(df["budget"].sum()))
+    col2.metric("Réel", euro(df["reel"].sum()))
+    col3.metric("Écart", euro(df["ecart"].sum()))
+
+    st.dataframe(df, use_container_width=True)
+
+# =====================
+# STATISTIQUES
+# =====================
+elif onglet == "📈 Statistiques":
+    df = pd.DataFrame(
+        supabase.table("v_charges_reelles")
+        .select("*")
+        .eq("annee", annee)
+        .execute()
+        .data
+    )
+
+    st.title("📈 Statistiques")
+
+    st.dataframe(
+        df.groupby("poste", as_index=False)
+        .agg(total=("charge_reelle", "sum"))
+        .sort_values("total", ascending=False),
+        use_container_width=True
+    )
+
+# =====================
+# CONTRÔLE RÉPARTITION
+# =====================
+elif onglet == "✅ Contrôle répartition":
+    df = pd.DataFrame(
+        supabase.table("v_controle_repartition")
+        .select("*")
+        .eq("annee", annee)
+        .execute()
+        .data
+    )
+
+    st.title("✅ Contrôle de répartition")
+
+    erreurs = df[df["statut"] != "OK"]
+
+    if erreurs.empty:
+        st.success("Toutes les dépenses sont correctement réparties")
     else:
-        st.info("Aucune colonne exploitable dans la table depenses")
-
-# =========================
-# 2. BUDGET
-# =========================
-with tabs[1]:
-    st.subheader("💰 Budget")
-
-    if df_bud.empty:
-        st.info("Aucune donnée budget")
-    else:
-        st.dataframe(df_bud, use_container_width=True)
-
-# =========================
-# 3. BUDGET VS RÉEL
-# =========================
-with tabs[2]:
-    st.subheader("📊 Budget vs Réel")
-
-    if "montant_ttc" not in df_dep or "montant" not in df_bud:
-        st.info("Données insuffisantes pour comparer")
-    else:
-        reel = df_dep["montant_ttc"].sum()
-        budget = df_bud["montant"].sum()
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Réel", euro(reel))
-        col2.metric("Budget", euro(budget))
-        col3.metric("Écart", euro(reel - budget))
-
-# =========================
-# 4. STATISTIQUES
-# =========================
-with tabs[3]:
-    st.subheader("📈 Statistiques")
-
-    if "poste" in df_dep and "montant_ttc" in df_dep:
-        stats = (
-            df_dep
-            .groupby("poste", dropna=False)
-            .agg(
-                total=("montant_ttc", "sum"),
-                nb=("montant_ttc", "count")
-            )
-            .reset_index()
-        )
-        st.dataframe(stats, use_container_width=True)
-    else:
-        st.info("Pas assez de données pour statistiques")
-
-# =========================
-# 5. CONTRÔLE RÉPARTITION
-# =========================
-with tabs[4]:
-    st.subheader("✅ Contrôle de répartition")
-
-    if df_rep.empty:
-        st.info("Aucune répartition enregistrée")
-    else:
-        st.dataframe(df_rep, use_container_width=True)
+        st.error("Dépenses mal réparties détectées")
+        st.dataframe(erreurs, use_container_width=True)
