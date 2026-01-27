@@ -36,8 +36,12 @@ def load_table(name, filters=None):
     res = q.execute()
     return pd.DataFrame(res.data) if res.data else pd.DataFrame()
 
+def safe_cols(df, cols):
+    """Ne garde que les colonnes réellement présentes"""
+    return [c for c in cols if c in df.columns]
+
 # =========================
-# APP
+# INIT
 # =========================
 supabase = get_supabase()
 
@@ -66,24 +70,31 @@ if page == "📄 État des dépenses":
     if df.empty:
         st.info("Aucune dépense pour cette année")
     else:
-        df["facture"] = df["facture_url"].apply(
-            lambda x: f"[Ouvrir]({x})" if pd.notna(x) else ""
-        )
+        # Facture cliquable si présente
+        if "facture_url" in df.columns:
+            df["facture"] = df["facture_url"].apply(
+                lambda x: f"[Ouvrir]({x})" if pd.notna(x) else ""
+            )
+
+        colonnes_affichage = safe_cols(df, [
+            "date",
+            "poste",
+            "compte",
+            "intitule_compte",
+            "fournisseur",
+            "montant_ttc",
+            "commentaire",
+            "facture"
+        ])
 
         st.dataframe(
-            df[[
-                "date",
-                "poste",
-                "compte",
-                "intitule_compte",
-                "fournisseur",
-                "montant_ttc",
-                "commentaire",
-                "facture"
-            ]],
+            df[colonnes_affichage],
             use_container_width=True
         )
 
+    # -------------------------
+    # AJOUT
+    # -------------------------
     st.markdown("### ➕ Ajouter une dépense")
     with st.form("add_depense"):
         date = st.date_input("Date")
@@ -119,11 +130,11 @@ elif page == "💰 Budget":
 
     df = load_table("budgets", {"annee": annee})
 
-    if not df.empty:
+    if not df.empty and "budget" in df.columns:
         st.metric("Budget total", euro(df["budget"].sum()))
-        st.dataframe(df[["poste", "budget"]], use_container_width=True)
+        st.dataframe(df[safe_cols(df, ["poste", "budget"])], use_container_width=True)
 
-    st.markdown("### ➕ Ajouter / modifier un poste budgétaire")
+    st.markdown("### ➕ Ajouter un poste budgétaire")
     with st.form("add_budget"):
         poste = st.text_input("Poste")
         budget = st.number_input("Budget annuel", value=0.0)
@@ -139,7 +150,7 @@ elif page == "💰 Budget":
             st.rerun()
 
 # =========================================================
-# 📊 BUDGET VS RÉEL (DÉTAILLÉ)
+# 📊 BUDGET VS RÉEL
 # =========================================================
 elif page == "📊 Budget vs Réel":
     st.title("📊 Budget vs Réel")
@@ -152,39 +163,26 @@ elif page == "📊 Budget vs Réel":
         st.stop()
 
     dep = (
-        df_dep
-        .groupby("poste", as_index=False)
+        df_dep.groupby("poste", as_index=False)
         .agg(reel=("montant_ttc", "sum"))
+        if "poste" in df_dep.columns else pd.DataFrame(columns=["poste", "reel"])
     )
 
     bud = (
-        df_bud
-        .groupby("poste", as_index=False)
+        df_bud.groupby("poste", as_index=False)
         .agg(budget=("budget", "sum"))
+        if "poste" in df_bud.columns else pd.DataFrame(columns=["poste", "budget"])
     )
 
     df = bud.merge(dep, on="poste", how="outer").fillna(0)
     df["ecart"] = df["budget"] - df["reel"]
-    df["ecart_pct"] = df.apply(
-        lambda r: (r["ecart"] / r["budget"] * 100) if r["budget"] != 0 else 0,
-        axis=1
-    )
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Budget", euro(df["budget"].sum()))
     c2.metric("Réel", euro(df["reel"].sum()))
     c3.metric("Écart", euro(df["ecart"].sum()))
 
-    st.dataframe(
-        df.rename(columns={
-            "poste": "Poste",
-            "budget": "Budget (€)",
-            "reel": "Réel (€)",
-            "ecart": "Écart (€)",
-            "ecart_pct": "Écart (%)"
-        }),
-        use_container_width=True
-    )
+    st.dataframe(df, use_container_width=True)
 
 # =========================================================
 # 📈 STATISTIQUES
@@ -196,17 +194,15 @@ elif page == "📈 Statistiques":
     if df.empty:
         st.info("Aucune donnée")
     else:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total dépenses", euro(df["montant_ttc"].sum()))
-        c2.metric("Nb factures", len(df))
-        c3.metric("Dépense moyenne", euro(df["montant_ttc"].mean()))
+        st.metric("Total dépenses", euro(df["montant_ttc"].sum()))
+        st.metric("Nombre de factures", len(df))
 
-        st.markdown("### Dépenses par poste")
-        st.dataframe(
-            df.groupby("poste", as_index=False)
-            .agg(total=("montant_ttc", "sum")),
-            use_container_width=True
-        )
+        if "poste" in df.columns:
+            st.dataframe(
+                df.groupby("poste", as_index=False)
+                .agg(total=("montant_ttc", "sum")),
+                use_container_width=True
+            )
 
 # =========================================================
 # 🚨 CONTRÔLE DE RÉPARTITION
