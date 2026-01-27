@@ -16,22 +16,27 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 # HELPERS
 # =========================
 def euro(v):
+    if pd.isna(v):
+        v = 0
     return f"{v:,.2f} €".replace(",", " ").replace(".", ",")
 
 @st.cache_data
 def load_depenses():
-    res = supabase.table("depenses").select("*").execute()
-    return pd.DataFrame(res.data)
+    return pd.DataFrame(
+        supabase.table("depenses").select("*").execute().data
+    )
 
 @st.cache_data
 def load_plan():
-    res = supabase.table("plan_comptable").select("*").execute()
-    return pd.DataFrame(res.data)
+    return pd.DataFrame(
+        supabase.table("plan_comptable").select("*").execute().data
+    )
 
 @st.cache_data
 def load_budget():
-    res = supabase.table("budgets").select("*").execute()
-    return pd.DataFrame(res.data)
+    return pd.DataFrame(
+        supabase.table("budgets").select("*").execute().data
+    )
 
 def refresh():
     st.cache_data.clear()
@@ -53,11 +58,13 @@ tabs = st.tabs([
 with tabs[0]:
     df = load_depenses()
     pc = load_plan()
+    bud = load_budget()
 
     if df.empty:
         st.warning("Aucune dépense disponible")
         st.stop()
 
+    # Jointure plan comptable
     df = df.merge(
         pc,
         how="left",
@@ -75,21 +82,22 @@ with tabs[0]:
     with col2:
         compte = st.selectbox(
             "Compte",
-            ["Tous"] + sorted(df["compte"].dropna().unique().tolist())
+            ["Tous"] + sorted(df["compte"].dropna().unique())
         )
 
     with col3:
         fournisseur = st.selectbox(
             "Fournisseur",
-            ["Tous"] + sorted(df["fournisseur"].dropna().unique().tolist())
+            ["Tous"] + sorted(df["fournisseur"].dropna().unique())
         )
 
     with col4:
         groupe = st.selectbox(
             "Groupe de compte",
-            ["Tous"] + sorted(df["groupe_compte"].dropna().unique().tolist())
+            ["Tous"] + sorted(df["groupe_compte"].dropna().unique())
         )
 
+    # Application filtres
     df_f = df[df["annee"] == annee]
 
     if compte != "Tous":
@@ -101,12 +109,29 @@ with tabs[0]:
     if groupe != "Tous":
         df_f = df_f[df_f["groupe_compte"] == groupe]
 
+    # =========================
+    # KPI
+    # =========================
+    total_depenses = df_f["montant_ttc"].sum()
+
+    # Budget de l'année (par groupe)
+    bud_y = bud[bud["annee"] == annee]
+
+    # Si filtre groupe → budget ciblé
+    if groupe != "Tous":
+        budget_total = bud_y[bud_y["groupe_compte"] == groupe]["montant"].sum()
+    else:
+        budget_total = bud_y["montant"].sum()
+
+    ecart = budget_total - total_depenses
+
     st.divider()
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total dépenses", euro(df_f["montant_ttc"].sum()))
-    col2.metric("Nombre de lignes", len(df_f))
-    col3.metric("Dépense moyenne", euro(df_f["montant_ttc"].mean()))
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("💸 Total dépenses", euro(total_depenses))
+    k2.metric("💰 Budget", euro(budget_total))
+    k3.metric("📉 Écart vs budget", euro(ecart))
+    k4.metric("🧾 Nombre de lignes", len(df_f))
 
     st.divider()
 
@@ -132,7 +157,6 @@ with tabs[1]:
     st.subheader("🧾 Plan comptable")
 
     pc = load_plan()
-
     st.dataframe(pc, use_container_width=True)
 
     st.divider()
@@ -144,9 +168,7 @@ with tabs[1]:
         groupe = st.text_input("Groupe de compte (ex: 601)")
         libelle_groupe = st.text_input("Libellé groupe")
 
-        submitted = st.form_submit_button("Enregistrer")
-
-        if submitted:
+        if st.form_submit_button("Enregistrer"):
             supabase.table("plan_comptable").upsert({
                 "compte_8": compte_8,
                 "libelle": libelle,
@@ -159,41 +181,32 @@ with tabs[1]:
     st.divider()
     st.subheader("🗑 Supprimer un compte")
 
-    compte_del = st.selectbox(
-        "Compte à supprimer",
-        pc["compte_8"].tolist()
-    )
-
-    if st.button("Supprimer"):
-        supabase.table("plan_comptable") \
-            .delete() \
-            .eq("compte_8", compte_del) \
-            .execute()
-        refresh()
-        st.success("Compte supprimé")
+    if not pc.empty:
+        compte_del = st.selectbox("Compte", pc["compte_8"])
+        if st.button("Supprimer"):
+            supabase.table("plan_comptable").delete().eq("compte_8", compte_del).execute()
+            refresh()
+            st.success("Compte supprimé")
 
 # =========================================================
 # 💰 BUDGET
 # =========================================================
 with tabs[2]:
-    st.subheader("💰 Budget par groupe de compte")
+    st.subheader("💰 Budgets")
 
-    df_b = load_budget()
-
-    if not df_b.empty:
-        st.dataframe(df_b, use_container_width=True)
+    bud = load_budget()
+    if not bud.empty:
+        st.dataframe(bud, use_container_width=True)
 
     st.divider()
     st.subheader("➕ Ajouter / modifier budget")
 
     with st.form("budget_form"):
-        annee = st.number_input("Année", min_value=2020, max_value=2100, value=2025)
+        annee = st.number_input("Année", value=2025)
         groupe = st.text_input("Groupe de compte")
         montant = st.number_input("Montant", min_value=0.0)
 
-        submit = st.form_submit_button("Enregistrer")
-
-        if submit:
+        if st.form_submit_button("Enregistrer"):
             supabase.table("budgets").insert({
                 "id": str(uuid4()),
                 "annee": annee,
@@ -203,19 +216,12 @@ with tabs[2]:
             refresh()
             st.success("Budget enregistré")
 
-    if not df_b.empty:
+    if not bud.empty:
         st.divider()
         st.subheader("🗑 Supprimer un budget")
 
-        id_del = st.selectbox(
-            "Budget à supprimer",
-            df_b["id"].tolist()
-        )
-
+        bid = st.selectbox("Budget", bud["id"])
         if st.button("Supprimer le budget"):
-            supabase.table("budgets") \
-                .delete() \
-                .eq("id", id_del) \
-                .execute()
+            supabase.table("budgets").delete().eq("id", bid).execute()
             refresh()
             st.success("Budget supprimé")
