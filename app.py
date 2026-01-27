@@ -1,245 +1,166 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
+from datetime import date
 
-# =========================
+# =====================
 # CONFIG
-# =========================
-BASE_TANTIEMES = 10_000
+# =====================
+st.set_page_config(page_title="Pilotage immeuble", layout="wide")
 
-st.set_page_config(
-    page_title="Pilotage des charges",
-    layout="wide"
-)
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# =========================
-# OUTILS
-# =========================
+# =====================
+# UTILS
+# =====================
 def euro(x):
-    try:
-        return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
-    except Exception:
-        return "0,00 €"
+    if pd.isna(x):
+        return "0 €"
+    return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
-@st.cache_resource
-def get_supabase():
-    return create_client(
-        st.secrets["SUPABASE_URL"],
-        st.secrets["SUPABASE_ANON_KEY"]
+def load_table(name):
+    res = supabase.table(name).select("*").execute()
+    return pd.DataFrame(res.data)
+
+# =====================
+# LOAD DATA
+# =====================
+df_dep = load_table("depenses")
+df_lots = load_table("lots")
+df_rep = load_table("repartition_depenses")
+
+# =====================
+# NORMALISATION
+# =====================
+if not df_dep.empty:
+    df_dep["date"] = pd.to_datetime(df_dep["date"], errors="coerce")
+    df_dep["montant_ttc"] = pd.to_numeric(df_dep["montant_ttc"], errors="coerce").fillna(0)
+
+# =====================
+# HEADER KPI
+# =====================
+st.title("📊 Pilotage des charges")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric("Total dépenses", euro(df_dep["montant_ttc"].sum()))
+
+with col2:
+    st.metric("Nombre de dépenses", len(df_dep))
+
+with col3:
+    st.metric("Postes distincts", df_dep["poste"].nunique())
+
+st.divider()
+
+# =====================
+# TABLEAU DÉPENSES
+# =====================
+st.subheader("🧾 État des dépenses")
+
+if df_dep.empty:
+    st.info("Aucune dépense enregistrée")
+else:
+    df_display = df_dep.merge(
+        df_lots,
+        on="lot_id",
+        how="left",
+        suffixes=("", "_lot")
     )
 
-def load_table(name, filters=None):
-    q = supabase.table(name).select("*")
-    if filters:
-        for k, v in filters.items():
-            q = q.eq(k, v)
-    res = q.execute()
-    return pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    df_display["facture"] = df_display["pdf_url"].apply(
+        lambda x: f"[Voir]({x})" if pd.notna(x) else ""
+    )
 
-def safe_cols(df, cols):
-    """Ne garde que les colonnes réellement présentes"""
-    return [c for c in cols if c in df.columns]
+    st.dataframe(
+        df_display[
+            [
+                "date",
+                "annee",
+                "poste",
+                "compte",
+                "fournisseur",
+                "montant_ttc",
+                "lot",
+                "batiment",
+                "tantiemes",
+                "facture",
+                "commentaire",
+            ]
+        ],
+        use_container_width=True,
+        column_config={
+            "montant_ttc": st.column_config.NumberColumn("Montant TTC (€)", format="%.2f"),
+            "facture": st.column_config.MarkdownColumn("Facture"),
+        },
+    )
 
-# =========================
-# INIT
-# =========================
-supabase = get_supabase()
+# =====================
+# AJOUT DÉPENSE
+# =====================
+st.divider()
+st.subheader("➕ Ajouter une dépense")
 
-st.sidebar.title("Navigation")
-page = st.sidebar.radio(
-    "Aller à",
-    [
-        "📄 État des dépenses",
-        "💰 Budget",
-        "📊 Budget vs Réel",
-        "📈 Statistiques",
-        "🚨 Contrôle de répartition",
-    ]
+with st.form("add_depense"):
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        d_date = st.date_input("Date", value=date.today())
+        d_poste = st.text_input("Poste")
+        d_compte = st.text_input("Compte")
+
+    with c2:
+        d_fournisseur = st.text_input("Fournisseur")
+        d_montant = st.number_input("Montant TTC", step=10.0)
+        d_lot = st.selectbox("Lot", df_lots["lot_id"])
+
+    with c3:
+        d_annee = st.number_input("Année", value=date.today().year)
+        d_pdf = st.text_input("URL facture (pdf_url)")
+        d_commentaire = st.text_area("Commentaire")
+
+    submitted = st.form_submit_button("Enregistrer")
+
+    if submitted:
+        supabase.table("depenses").insert(
+            {
+                "date": str(d_date),
+                "annee": d_annee,
+                "poste": d_poste,
+                "compte": d_compte,
+                "fournisseur": d_fournisseur,
+                "montant_ttc": d_montant,
+                "lot_id": d_lot,
+                "pdf_url": d_pdf if d_pdf else None,
+                "commentaire": d_commentaire,
+            }
+        ).execute()
+
+        st.success("Dépense ajoutée")
+        st.rerun()
+
+# =====================
+# BUDGET vs RÉEL (PAR POSTE)
+# =====================
+st.divider()
+st.subheader("📉 Réel par poste")
+
+df_poste = (
+    df_dep.groupby("poste", dropna=False)["montant_ttc"]
+    .sum()
+    .reset_index()
+    .sort_values("montant_ttc", ascending=False)
 )
 
-annee = st.sidebar.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
+st.dataframe(
+    df_poste,
+    use_container_width=True,
+    column_config={
+        "montant_ttc": st.column_config.NumberColumn("Total TTC (€)", format="%.2f")
+    },
+)
 
-# =========================================================
-# 📄 ÉTAT DES DÉPENSES
-# =========================================================
-if page == "📄 État des dépenses":
-    st.title("📄 État des dépenses")
-
-    df = load_table("depenses", {"annee": annee})
-
-    if df.empty:
-        st.info("Aucune dépense pour cette année")
-    else:
-        # Facture cliquable si présente
-        if "facture_url" in df.columns:
-            df["facture"] = df["facture_url"].apply(
-                lambda x: f"[Ouvrir]({x})" if pd.notna(x) else ""
-            )
-
-        colonnes_affichage = safe_cols(df, [
-            "date",
-            "poste",
-            "compte",
-            "intitule_compte",
-            "fournisseur",
-            "montant_ttc",
-            "commentaire",
-            "facture"
-        ])
-
-        st.dataframe(
-            df[colonnes_affichage],
-            use_container_width=True
-        )
-
-    # -------------------------
-    # AJOUT
-    # -------------------------
-    st.markdown("### ➕ Ajouter une dépense")
-    with st.form("add_depense"):
-        date = st.date_input("Date")
-        poste = st.text_input("Poste")
-        compte = st.text_input("Compte")
-        intitule = st.text_input("Intitulé du compte")
-        fournisseur = st.text_input("Fournisseur")
-        montant = st.number_input("Montant TTC", value=0.0)
-        commentaire = st.text_area("Commentaire")
-        facture_url = st.text_input("Lien facture (optionnel)")
-        submit = st.form_submit_button("Enregistrer")
-
-        if submit:
-            supabase.table("depenses").insert({
-                "date": str(date),
-                "annee": annee,
-                "poste": poste,
-                "compte": compte,
-                "intitule_compte": intitule,
-                "fournisseur": fournisseur,
-                "montant_ttc": montant,
-                "commentaire": commentaire,
-                "facture_url": facture_url
-            }).execute()
-            st.success("Dépense enregistrée")
-            st.rerun()
-
-# =========================================================
-# 💰 BUDGET
-# =========================================================
-elif page == "💰 Budget":
-    st.title("💰 Budget")
-
-    df = load_table("budgets", {"annee": annee})
-
-    if not df.empty and "budget" in df.columns:
-        st.metric("Budget total", euro(df["budget"].sum()))
-        st.dataframe(df[safe_cols(df, ["poste", "budget"])], use_container_width=True)
-
-    st.markdown("### ➕ Ajouter un poste budgétaire")
-    with st.form("add_budget"):
-        poste = st.text_input("Poste")
-        budget = st.number_input("Budget annuel", value=0.0)
-        submit = st.form_submit_button("Enregistrer")
-
-        if submit:
-            supabase.table("budgets").insert({
-                "annee": annee,
-                "poste": poste,
-                "budget": budget
-            }).execute()
-            st.success("Budget enregistré")
-            st.rerun()
-
-# =========================================================
-# 📊 BUDGET VS RÉEL
-# =========================================================
-elif page == "📊 Budget vs Réel":
-    st.title("📊 Budget vs Réel")
-
-    df_dep = load_table("depenses", {"annee": annee})
-    df_bud = load_table("budgets", {"annee": annee})
-
-    if df_dep.empty and df_bud.empty:
-        st.warning("Aucune donnée")
-        st.stop()
-
-    dep = (
-        df_dep.groupby("poste", as_index=False)
-        .agg(reel=("montant_ttc", "sum"))
-        if "poste" in df_dep.columns else pd.DataFrame(columns=["poste", "reel"])
-    )
-
-    bud = (
-        df_bud.groupby("poste", as_index=False)
-        .agg(budget=("budget", "sum"))
-        if "poste" in df_bud.columns else pd.DataFrame(columns=["poste", "budget"])
-    )
-
-    df = bud.merge(dep, on="poste", how="outer").fillna(0)
-    df["ecart"] = df["budget"] - df["reel"]
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Budget", euro(df["budget"].sum()))
-    c2.metric("Réel", euro(df["reel"].sum()))
-    c3.metric("Écart", euro(df["ecart"].sum()))
-
-    st.dataframe(df, use_container_width=True)
-
-# =========================================================
-# 📈 STATISTIQUES
-# =========================================================
-elif page == "📈 Statistiques":
-    st.title("📈 Statistiques")
-
-    df = load_table("depenses", {"annee": annee})
-    if df.empty:
-        st.info("Aucune donnée")
-    else:
-        st.metric("Total dépenses", euro(df["montant_ttc"].sum()))
-        st.metric("Nombre de factures", len(df))
-
-        if "poste" in df.columns:
-            st.dataframe(
-                df.groupby("poste", as_index=False)
-                .agg(total=("montant_ttc", "sum")),
-                use_container_width=True
-            )
-
-# =========================================================
-# 🚨 CONTRÔLE DE RÉPARTITION
-# =========================================================
-elif page == "🚨 Contrôle de répartition":
-    st.title("🚨 Contrôle de répartition")
-
-    df_dep = load_table("depenses", {"annee": annee})
-    df_rep = load_table("repartition_depenses")
-    df_lots = load_table("lots")
-
-    if df_dep.empty or df_rep.empty:
-        st.warning("Données insuffisantes")
-        st.stop()
-
-    df = (
-        df_rep
-        .merge(df_dep, left_on="depense_id", right_on="id")
-        .merge(df_lots, left_on="lot_id", right_on="id", suffixes=("", "_lot"))
-    )
-
-    df["montant_reparti"] = df["montant_ttc"] * df["quote_part"] / BASE_TANTIEMES
-
-    ctrl = (
-        df.groupby("depense_id", as_index=False)
-        .agg(
-            montant_depense=("montant_ttc", "first"),
-            montant_reparti=("montant_reparti", "sum")
-        )
-    )
-
-    ctrl["ecart"] = ctrl["montant_depense"] - ctrl["montant_reparti"]
-
-    anomalies = ctrl[ctrl["ecart"].abs() > 0.01]
-
-    if anomalies.empty:
-        st.success("Toutes les dépenses sont correctement réparties")
-    else:
-        st.error(f"{len(anomalies)} anomalies détectées")
-        st.dataframe(anomalies, use_container_width=True)
+st.bar_chart(df_poste.set_index("poste"))
