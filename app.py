@@ -1,15 +1,28 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
+import altair as alt
 
-# =========================
-# CONFIG
-# =========================
-st.set_page_config(page_title="Pilotage des charges", layout="wide")
+# =====================================================
+# CONFIG STREAMLIT
+# =====================================================
+st.set_page_config(
+    page_title="Pilotage des charges",
+    layout="wide"
+)
 
-# =========================
+# =====================================================
+# OUTILS
+# =====================================================
+def euro(val):
+    try:
+        return f"{val:,.2f} €".replace(",", " ").replace(".", ",")
+    except Exception:
+        return "0,00 €"
+
+# =====================================================
 # SUPABASE
-# =========================
+# =====================================================
 @st.cache_resource
 def get_supabase():
     return create_client(
@@ -17,201 +30,85 @@ def get_supabase():
         st.secrets["SUPABASE_ANON_KEY"]
     )
 
-supabase = get_supabase()
-
-def euro(x):
-    return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
-
-# =========================
-# DATA LOADERS
-# =========================
 @st.cache_data
-def load_depenses():
-    return pd.DataFrame(
-        supabase.table("depenses")
+def load_budget_vs_reel():
+    supabase = get_supabase()
+    res = (
+        supabase
+        .table("v_budget_vs_reel_2025_groupe")
         .select("*")
         .execute()
-        .data
     )
+    return pd.DataFrame(res.data)
 
-@st.cache_data
-def load_budget():
-    return pd.DataFrame(
-        supabase.table("budget")
-        .select("*")
-        .execute()
-        .data
-    )
-
-# =========================
-# APP
-# =========================
+# =====================================================
+# MAIN
+# =====================================================
 def main():
-    st.title("📊 Pilotage des charges")
+    st.title("📊 Pilotage des charges – Budget vs Réel")
 
-    df_dep = load_depenses()
-    df_bud = load_budget()
+    df = load_budget_vs_reel()
 
-    if df_dep.empty:
-        st.error("Aucune dépense trouvée")
+    if df.empty:
+        st.warning("Aucune donnée disponible.")
         return
 
-    # =========================
-    # FILTRES GLOBAUX
-    # =========================
-    st.sidebar.header("🔎 Filtres")
+    # =================================================
+    # KPI
+    # =================================================
+    budget_total = df["budget_total"].sum()
+    reel_total   = df["reel_total"].sum()
+    ecart_total  = df["ecart_total"].sum()
 
-    annee = st.sidebar.selectbox(
-        "Année",
-        sorted(df_dep["annee"].dropna().unique())
+    col1, col2, col3 = st.columns(3)
+    col1.metric("💰 Budget total", euro(budget_total))
+    col2.metric("💸 Charges réelles", euro(reel_total))
+    col3.metric("📊 Écart global", euro(ecart_total))
+
+    st.divider()
+
+    # =================================================
+    # TABLEAU
+    # =================================================
+    st.subheader("📋 Détail par groupe de comptes")
+
+    st.dataframe(
+        df.sort_values("groupe_compte").rename(columns={
+            "annee": "Année",
+            "groupe_compte": "Groupe de comptes",
+            "budget_total": "Budget (€)",
+            "reel_total": "Réel (€)",
+            "ecart_total": "Écart (€)"
+        }),
+        use_container_width=True
     )
 
-    df_dep = df_dep[df_dep["annee"] == annee]
-    df_bud = df_bud[df_bud["annee"] == annee]
+    st.divider()
 
-    compte = st.sidebar.selectbox(
-        "Compte",
-        ["Tous"] + sorted(df_dep["compte"].dropna().unique())
+    # =================================================
+    # GRAPHIQUE
+    # =================================================
+    st.subheader("📈 Réel par groupe de comptes")
+
+    chart = (
+        alt.Chart(df)
+        .mark_bar()
+        .encode(
+            x=alt.X("groupe_compte:N", title="Groupe de comptes"),
+            y=alt.Y("reel_total:Q", title="Charges réelles (€)"),
+            tooltip=[
+                alt.Tooltip("groupe_compte:N", title="Groupe"),
+                alt.Tooltip("budget_total:Q", title="Budget", format=",.2f"),
+                alt.Tooltip("reel_total:Q", title="Réel", format=",.2f"),
+                alt.Tooltip("ecart_total:Q", title="Écart", format=",.2f")
+            ]
+        )
     )
-    fournisseur = st.sidebar.selectbox(
-        "Fournisseur",
-        ["Tous"] + sorted(df_dep["fournisseur"].dropna().unique())
-    )
-    poste = st.sidebar.selectbox(
-        "Poste",
-        ["Tous"] + sorted(df_dep["poste"].dropna().unique())
-    )
 
-    if compte != "Tous":
-        df_dep = df_dep[df_dep["compte"] == compte]
-    if fournisseur != "Tous":
-        df_dep = df_dep[df_dep["fournisseur"] == fournisseur]
-    if poste != "Tous":
-        df_dep = df_dep[df_dep["poste"] == poste]
+    st.altair_chart(chart, use_container_width=True)
 
-    # =========================
-    # ONGLET
-    # =========================
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📄 État des dépenses",
-        "💰 Budget",
-        "📊 Budget vs Réel",
-        "📈 Statistiques",
-        "✅ Contrôle répartition"
-    ])
-
-    # =========================
-    # 1. ÉTAT DES DÉPENSES
-    # =========================
-    with tab1:
-        st.subheader("📄 État des dépenses")
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total dépenses", euro(df_dep["montant_ttc"].sum()))
-        col2.metric("Nombre de lignes", len(df_dep))
-        col3.metric("Dépense moyenne", euro(df_dep["montant_ttc"].mean()))
-
-        display_cols = [
-            "date", "compte", "poste", "fournisseur",
-            "montant_ttc", "commentaire"
-        ]
-
-        if "facture_url" in df_dep.columns:
-            df_dep["Facture"] = df_dep["facture_url"].apply(
-                lambda x: f"[📄 Voir]({x})" if pd.notna(x) else ""
-            )
-            display_cols.append("Facture")
-
-        st.dataframe(
-            df_dep[display_cols],
-            use_container_width=True
-        )
-
-    # =========================
-    # 2. BUDGET
-    # =========================
-    with tab2:
-        st.subheader("💰 Budget")
-
-        if df_bud.empty:
-            st.warning("Aucun budget pour cette année")
-        else:
-            st.metric("Budget total", euro(df_bud["budget"].sum()))
-            st.dataframe(df_bud, use_container_width=True)
-
-    # =========================
-    # 3. BUDGET VS RÉEL
-    # =========================
-    with tab3:
-        st.subheader("📊 Budget vs Réel")
-
-        dep_agg = (
-            df_dep
-            .groupby("compte", as_index=False)
-            .agg(reel=("montant_ttc", "sum"))
-        )
-
-        bvr = dep_agg.merge(
-            df_bud[["compte", "budget"]],
-            on="compte",
-            how="outer"
-        ).fillna(0)
-
-        bvr["écart"] = bvr["reel"] - bvr["budget"]
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Réel", euro(bvr["reel"].sum()))
-        col2.metric("Budget", euro(bvr["budget"].sum()))
-        col3.metric("Écart", euro(bvr["écart"].sum()))
-
-        st.dataframe(
-            bvr.rename(columns={
-                "compte": "Compte",
-                "reel": "Réel (€)",
-                "budget": "Budget (€)",
-                "écart": "Écart (€)"
-            }),
-            use_container_width=True
-        )
-
-    # =========================
-    # 4. STATISTIQUES
-    # =========================
-    with tab4:
-        st.subheader("📈 Statistiques")
-
-        st.markdown("### Par poste")
-        st.dataframe(
-            df_dep.groupby("poste", as_index=False)
-            .agg(total=("montant_ttc", "sum"))
-            .sort_values("total", ascending=False),
-            use_container_width=True
-        )
-
-        st.markdown("### Par fournisseur")
-        st.dataframe(
-            df_dep.groupby("fournisseur", as_index=False)
-            .agg(total=("montant_ttc", "sum"))
-            .sort_values("total", ascending=False),
-            use_container_width=True
-        )
-
-    # =========================
-    # 5. CONTRÔLE RÉPARTITION
-    # =========================
-    with tab5:
-        st.subheader("✅ Contrôle simple")
-
-        total_dep = df_dep["montant_ttc"].sum()
-        total_budget = df_bud["budget"].sum() if not df_bud.empty else 0
-
-        st.metric("Total dépenses", euro(total_dep))
-        st.metric("Total budget", euro(total_budget))
-        st.metric("Différence", euro(total_dep - total_budget))
-
-
-# =========================
+# =====================================================
 # RUN
-# =========================
+# =====================================================
 if __name__ == "__main__":
     main()
