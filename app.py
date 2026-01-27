@@ -2,206 +2,259 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 
-# =====================================================
+# =========================
 # CONFIG
-# =====================================================
-st.set_page_config(page_title="Pilotage des charges", layout="wide")
+# =========================
+BASE_TANTIEMES = 10_000
 
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_ANON_KEY"]
+st.set_page_config(
+    page_title="🏢 Pilotage des charges",
+    layout="wide"
+)
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# =========================
+# SUPABASE
+# =========================
+@st.cache_resource
+def get_supabase():
+    return create_client(
+        st.secrets["SUPABASE_URL"],
+        st.secrets["SUPABASE_ANON_KEY"]
+    )
 
-# =====================================================
-# UTILS
-# =====================================================
-def euro(v):
-    if pd.isna(v):
-        return "—"
-    return f"{v:,.2f} €".replace(",", " ").replace(".", ",")
+supabase = get_supabase()
 
-def safe_col(df, col):
-    if col not in df.columns:
-        df[col] = None
-    return df
+# =========================
+# HELPERS
+# =========================
+def euro(x):
+    return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
-# =====================================================
+def groupe_compte(compte: str) -> str:
+    if compte in {"6211", "6213", "6222", "6223"}:
+        return compte[:4]
+    return compte[:3]
+
+# =========================
 # LOADERS
-# =====================================================
+# =========================
 @st.cache_data
 def load_depenses():
-    res = supabase.table("depenses").select("*").execute()
-    df = pd.DataFrame(res.data)
-
-    if df.empty:
-        return df
-
-    df["date"] = pd.to_datetime(df.get("date"), errors="coerce")
-    df["montant_ttc"] = pd.to_numeric(df.get("montant_ttc"), errors="coerce")
-    df["lot_id"] = pd.to_numeric(df.get("lot_id"), errors="coerce")
-
-    for c in ["poste", "compte", "fournisseur", "commentaire", "pdf_url"]:
-        df = safe_col(df, c)
-
+    df = pd.DataFrame(
+        supabase.table("depenses").select("*").execute().data
+    )
+    df["date"] = pd.to_datetime(df["date"])
+    df["annee"] = df["date"].dt.year
+    df["groupe"] = df["compte"].astype(str).apply(groupe_compte)
     return df
-
-
-@st.cache_data
-def load_lots():
-    res = supabase.table("lots").select("*").execute()
-    df = pd.DataFrame(res.data)
-
-    if df.empty:
-        return df
-
-    df["lot_id"] = pd.to_numeric(df.get("lot_id"), errors="coerce")
-
-    for c in ["lot", "batiment", "etage", "tantiemes"]:
-        df = safe_col(df, c)
-
-    return df
-
 
 @st.cache_data
 def load_budgets():
-    res = supabase.table("budgets").select("*").execute()
-    df = pd.DataFrame(res.data)
+    return pd.DataFrame(
+        supabase.table("budgets").select("*").execute().data
+    )
 
-    if df.empty:
-        return df
+@st.cache_data
+def load_lots():
+    return pd.DataFrame(
+        supabase.table("lots").select("*").execute().data
+    )
 
-    df["annee"] = pd.to_numeric(df.get("annee"), errors="coerce")
-    df["budget"] = pd.to_numeric(df.get("budget"), errors="coerce")
-    df = safe_col(df, "poste")
+@st.cache_data
+def load_repartition():
+    return pd.DataFrame(
+        supabase.table("repartition_depenses").select("*").execute().data
+    )
 
-    return df
+# =========================
+# DATA
+# =========================
+df_dep = load_depenses()
+df_bud = load_budgets()
+df_lots = load_lots()
+df_rep = load_repartition()
 
-# =====================================================
-# MAIN
-# =====================================================
-def main():
-    st.title("📊 Pilotage des charges")
+# =========================
+# SIDEBAR – FILTRES
+# =========================
+st.sidebar.title("🔎 Filtres")
 
-    df_dep = load_depenses()
-    df_lots = load_lots()
-    df_budget = load_budgets()
+annee = st.sidebar.selectbox(
+    "Année",
+    sorted(df_dep["annee"].unique()),
+    index=0
+)
 
-    # =================================================
-    # KPI GLOBALS
-    # =================================================
-    c1, c2 = st.columns(2)
-    c1.metric("💸 Total des dépenses", euro(df_dep["montant_ttc"].sum()))
-    c2.metric("🧾 Nombre de dépenses", len(df_dep))
+df_f = df_dep[df_dep["annee"] == annee]
 
-    # =================================================
-    # TABS
-    # =================================================
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📋 État des dépenses",
-        "💰 Budget",
-        "📊 Budget vs Réel",
-        "📈 Statistiques",
-        "🚨 Contrôle répartition"
-    ])
+compte = st.sidebar.selectbox(
+    "Compte",
+    ["Tous"] + sorted(df_f["compte"].dropna().unique().tolist())
+)
 
-    # =================================================
-    # TAB 1 — ÉTAT DES DÉPENSES
-    # =================================================
-    with tab1:
-        df_show = df_dep.merge(
-            df_lots,
-            on="lot_id",
-            how="left"
+fournisseur = st.sidebar.selectbox(
+    "Fournisseur",
+    ["Tous"] + sorted(df_f["fournisseur"].dropna().unique().tolist())
+)
+
+poste = st.sidebar.selectbox(
+    "Poste / Groupe",
+    ["Tous"] + sorted(df_f["poste"].dropna().unique().tolist())
+)
+
+if compte != "Tous":
+    df_f = df_f[df_f["compte"] == compte]
+
+if fournisseur != "Tous":
+    df_f = df_f[df_f["fournisseur"] == fournisseur]
+
+if poste != "Tous":
+    df_f = df_f[df_f["poste"] == poste]
+
+# =========================
+# TABS
+# =========================
+tab_dep, tab_bud, tab_bvr, tab_stats, tab_ctrl = st.tabs([
+    "📄 État des dépenses",
+    "💰 Budget",
+    "📊 Budget vs Réel",
+    "📈 Statistiques",
+    "✅ Contrôle répartition"
+])
+
+# =========================
+# 📄 ÉTAT DES DÉPENSES
+# =========================
+with tab_dep:
+    st.subheader("📄 État des dépenses")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total dépenses", euro(df_f["montant_ttc"].sum()))
+    col2.metric("Nombre de lignes", len(df_f))
+    col3.metric("Dépense moyenne", euro(df_f["montant_ttc"].mean() if len(df_f) else 0))
+
+    df_display = df_f.copy()
+    df_display["Facture"] = df_display["facture_url"].apply(
+        lambda x: f"[📎 Ouvrir]({x})" if pd.notna(x) else ""
+    )
+
+    st.dataframe(
+        df_display[[
+            "date",
+            "compte",
+            "poste",
+            "fournisseur",
+            "montant_ttc",
+            "Facture",
+            "commentaire"
+        ]],
+        use_container_width=True
+    )
+
+# =========================
+# 💰 BUDGET
+# =========================
+with tab_bud:
+    st.subheader("💰 Budget")
+
+    df_bud_y = df_bud[df_bud["annee"] == annee]
+
+    col1, col2 = st.columns(2)
+    col1.metric("Budget total", euro(df_bud_y["montant"].sum()))
+    col2.metric("Nombre de postes", len(df_bud_y))
+
+    st.dataframe(
+        df_bud_y[["compte", "poste", "montant"]],
+        use_container_width=True
+    )
+
+# =========================
+# 📊 BUDGET VS RÉEL
+# =========================
+with tab_bvr:
+    st.subheader("📊 Budget vs Réel")
+
+    reel = (
+        df_f
+        .groupby("groupe", as_index=False)
+        .agg(reel=("montant_ttc", "sum"))
+    )
+
+    budget = (
+        df_bud_y
+        .assign(groupe=lambda d: d["compte"].astype(str).apply(groupe_compte))
+        .groupby("groupe", as_index=False)
+        .agg(budget=("montant", "sum"))
+    )
+
+    df_cmp = (
+        budget
+        .merge(reel, on="groupe", how="outer")
+        .fillna(0)
+    )
+
+    df_cmp["écart"] = df_cmp["budget"] - df_cmp["reel"]
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Budget", euro(df_cmp["budget"].sum()))
+    col2.metric("Réel", euro(df_cmp["reel"].sum()))
+    col3.metric("Écart", euro(df_cmp["écart"].sum()))
+
+    st.dataframe(
+        df_cmp.rename(columns={
+            "groupe": "Groupe",
+            "budget": "Budget (€)",
+            "reel": "Réel (€)",
+            "écart": "Écart (€)"
+        }),
+        use_container_width=True
+    )
+
+# =========================
+# 📈 STATISTIQUES
+# =========================
+with tab_stats:
+    st.subheader("📈 Statistiques")
+
+    st.dataframe(
+        df_f
+        .groupby("poste", as_index=False)
+        .agg(
+            total=("montant_ttc", "sum"),
+            nb=("id", "count")
         )
+        .sort_values("total", ascending=False),
+        use_container_width=True
+    )
 
-        df_show["montant_ttc"] = df_show["montant_ttc"].apply(euro)
+# =========================
+# ✅ CONTRÔLE RÉPARTITION
+# =========================
+with tab_ctrl:
+    st.subheader("✅ Contrôle de répartition")
 
-        st.dataframe(
-            df_show[[
-                "date",
-                "poste",
-                "compte",
-                "fournisseur",
-                "montant_ttc",
-                "lot",
-                "batiment",
-                "etage",
-                "commentaire",
-                "pdf_url"
-            ]],
-            use_container_width=True,
-            hide_index=True
+    df_r = (
+        df_rep
+        .merge(df_dep[["id", "montant_ttc"]], left_on="depense_id", right_on="id")
+    )
+
+    df_r["montant_reparti"] = df_r["montant_ttc"] * df_r["quote_part"] / BASE_TANTIEMES
+
+    ctrl = (
+        df_r
+        .groupby("depense_id", as_index=False)
+        .agg(
+            montant=("montant_ttc", "first"),
+            reparti=("montant_reparti", "sum")
         )
+    )
 
-    # =================================================
-    # TAB 2 — BUDGET
-    # =================================================
-    with tab2:
-        df_b = df_budget.copy()
-        df_b["budget"] = df_b["budget"].apply(euro)
+    ctrl["écart"] = ctrl["montant"] - ctrl["reparti"]
 
-        st.dataframe(df_b, use_container_width=True, hide_index=True)
+    anomalies = ctrl[ctrl["écart"].abs() > 0.01]
 
-    # =================================================
-    # TAB 3 — BUDGET VS RÉEL
-    # =================================================
-    with tab3:
-        df_dep["annee"] = df_dep["date"].dt.year
-
-        df_reel = (
-            df_dep
-            .groupby(["annee", "poste"], as_index=False)["montant_ttc"]
-            .sum()
-            .rename(columns={"montant_ttc": "reel"})
-        )
-
-        df_cmp = df_reel.merge(
-            df_budget,
-            on=["annee", "poste"],
-            how="left"
-        )
-
-        df_cmp["budget"] = df_cmp["budget"].fillna(0)
-        df_cmp["ecart"] = df_cmp["budget"] - df_cmp["reel"]
-
-        df_cmp["budget"] = df_cmp["budget"].apply(euro)
-        df_cmp["reel"] = df_cmp["reel"].apply(euro)
-        df_cmp["ecart"] = df_cmp["ecart"].apply(euro)
-
-        st.dataframe(df_cmp, use_container_width=True, hide_index=True)
-
-    # =================================================
-    # TAB 4 — STATISTIQUES
-    # =================================================
-    with tab4:
-        stats = (
-            df_dep
-            .groupby("poste", as_index=False)["montant_ttc"]
-            .sum()
-            .sort_values("montant_ttc", ascending=False)
-        )
-
-        stats["montant_ttc"] = stats["montant_ttc"].apply(euro)
-        st.dataframe(stats, use_container_width=True, hide_index=True)
-
-    # =================================================
-    # TAB 5 — CONTRÔLE RÉPARTITION
-    # =================================================
-    with tab5:
-        st.info(
-            "Contrôle logique : la somme des charges par poste doit "
-            "correspondre au total des dépenses."
-        )
-
-        total = df_dep["montant_ttc"].sum()
-        check = (
-            df_dep.groupby("poste")["montant_ttc"].sum().sum()
-        )
-
-        st.metric("Total dépenses", euro(total))
-        st.metric("Somme par postes", euro(check))
-        st.metric("Écart", euro(total - check))
-
-
-if __name__ == "__main__":
-    main()
+    if anomalies.empty:
+        st.success("✅ Toutes les dépenses sont correctement réparties")
+    else:
+        st.error(f"❌ {len(anomalies)} anomalie(s)")
+        st.dataframe(anomalies, use_container_width=True)
