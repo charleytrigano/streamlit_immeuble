@@ -140,7 +140,7 @@ elif onglet == "📘 Plan comptable":
             .execute()
 
         st.success("Libellé mis à jour")
-        st.experimental_rerun()
+        st.rerun()
 
 # ======================
 # ONGLET 3 — BUDGET
