@@ -5,177 +5,127 @@ from supabase import create_client
 # =========================
 # CONFIG
 # =========================
-st.set_page_config("Pilotage des charges", layout="wide")
+st.set_page_config(page_title="Pilotage des charges", layout="wide")
 
-@st.cache_resource
-def get_supabase():
-    return create_client(
-        st.secrets["SUPABASE_URL"],
-        st.secrets["SUPABASE_ANON_KEY"]
-    )
-
-supabase = get_supabase()
-
-def euro(v):
-    return f"{v:,.2f} €".replace(",", " ").replace(".", ",")
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # =========================
 # LOADERS
 # =========================
+@st.cache_data
 def load_depenses():
     return pd.DataFrame(
-        supabase.table("depenses")
-        .select("*")
-        .execute()
-        .data
+        supabase.table("depenses").select("*").execute().data
     )
 
+@st.cache_data
 def load_plan():
     return pd.DataFrame(
-        supabase.table("plan_comptable")
-        .select("*")
-        .eq("actif", True)
-        .execute()
-        .data
+        supabase.table("plan_comptable").select("*").execute().data
     )
 
+@st.cache_data
 def load_budgets():
     return pd.DataFrame(
-        supabase.table("budgets")
-        .select("*")
-        .execute()
-        .data
+        supabase.table("budgets").select("*").execute().data
     )
 
 # =========================
-# UI
+# DATA
 # =========================
-st.title("🏢 Pilotage des charges")
+df_dep = load_depenses()
+df_plan = load_plan()
+df_bud = load_budgets()
 
-tabs = st.tabs([
+# =========================
+# SIDEBAR FILTERS
+# =========================
+st.sidebar.header("🔎 Filtres")
+
+annees = sorted(df_dep["annee"].unique())
+annee = st.sidebar.selectbox("Année", annees)
+
+df_dep_y = df_dep[df_dep["annee"] == annee]
+df_bud_y = df_bud[df_bud["annee"] == annee]
+
+# =========================
+# KPIs
+# =========================
+dep_total = df_dep_y["montant_ttc"].sum()
+bud_total = df_bud_y["montant"].sum() if not df_bud_y.empty else 0
+ecart = bud_total - dep_total
+
+c1, c2, c3 = st.columns(3)
+c1.metric("💸 Dépenses réelles", f"{dep_total:,.2f} €")
+c2.metric("💰 Budget", f"{bud_total:,.2f} €")
+c3.metric("📉 Écart", f"{ecart:,.2f} €")
+
+# =========================
+# TABS
+# =========================
+tab1, tab2, tab3 = st.tabs([
     "📄 État des dépenses",
-    "🧾 Plan comptable",
-    "💰 Budget"
+    "📘 Plan comptable",
+    "💰 Budgets"
 ])
 
-# ======================================================
-# 📄 ÉTAT DES DÉPENSES
-# ======================================================
-with tabs[0]:
-    df_dep = load_depenses()
-    df_plan = load_plan()
-    df_bud = load_budgets()
+# =========================
+# TAB 1 – DÉPENSES
+# =========================
+with tab1:
+    st.subheader("État des dépenses")
+    st.dataframe(df_dep_y, use_container_width=True)
 
-    df = df_dep.merge(df_plan, on="compte", how="left")
-
-    st.subheader("🔎 Filtres")
-
-    colf1, colf2, colf3, colf4 = st.columns(4)
-
-    annee = colf1.selectbox(
-        "Année",
-        sorted(df["annee"].unique())
-    )
-
-    compte = colf2.selectbox(
-        "Compte",
-        ["Tous"] + sorted(df["compte"].unique())
-    )
-
-    fournisseur = colf3.selectbox(
-        "Fournisseur",
-        ["Tous"] + sorted(df["fournisseur"].dropna().unique())
-    )
-
-    groupe = colf4.selectbox(
-        "Groupe de compte",
-        ["Tous"] + sorted(df["groupe_compte"].dropna().unique())
-    )
-
-    df = df[df["annee"] == annee]
-
-    if compte != "Tous":
-        df = df[df["compte"] == compte]
-
-    if fournisseur != "Tous":
-        df = df[df["fournisseur"] == fournisseur]
-
-    if groupe != "Tous":
-        df = df[df["groupe_compte"] == groupe]
-
-    # ================= KPI =================
-    total_dep = df["montant_ttc"].sum()
-
-    bud_annee = df_bud[df_bud["annee"] == annee]["budget"].sum()
-    ecart = total_dep - bud_annee
-
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Total dépenses", euro(total_dep))
-    k2.metric("Budget", euro(bud_annee))
-    k3.metric("Écart", euro(ecart))
-
-    # ================= TABLE =================
-    df["facture"] = df["facture_path"].apply(
-        lambda x: f"[📎 Ouvrir]({x})" if pd.notna(x) else ""
-    )
-
-    st.dataframe(
-        df[[
-            "date",
-            "compte",
-            "libelle_compte",
-            "groupe_compte",
-            "fournisseur",
-            "montant_ttc",
-            "commentaire",
-            "facture"
-        ]],
-        use_container_width=True
-    )
-
-# ======================================================
-# 🧾 PLAN COMPTABLE
-# ======================================================
-with tabs[1]:
+# =========================
+# TAB 2 – PLAN COMPTABLE
+# =========================
+with tab2:
     st.subheader("Plan comptable")
 
-    df_plan = load_plan()
     st.dataframe(df_plan, use_container_width=True)
 
-    with st.expander("➕ Ajouter / modifier un compte"):
-        compte = st.text_input("Compte (8 chiffres)")
-        lib = st.text_input("Libellé compte")
-        grp = st.text_input("Groupe (3 chiffres)")
-        lib_grp = st.text_input("Libellé groupe")
+    st.markdown("### ➕ Ajouter / modifier un compte")
+    with st.form("plan_form"):
+        compte_8 = st.text_input("Compte (8 chiffres)")
+        libelle = st.text_input("Libellé")
+        groupe = st.text_input("Groupe (3 chiffres)")
+        lib_groupe = st.text_input("Libellé groupe")
 
-        if st.button("Enregistrer"):
+        submit = st.form_submit_button("Enregistrer")
+
+        if submit:
             supabase.table("plan_comptable").upsert({
-                "compte": compte,
-                "libelle_compte": lib,
-                "groupe_compte": grp,
-                "libelle_groupe": lib_grp,
-                "actif": True
+                "compte_8": compte_8,
+                "libelle": libelle,
+                "groupe_compte": groupe,
+                "libelle_groupe": lib_groupe
             }).execute()
+            st.cache_data.clear()
             st.success("Compte enregistré")
 
-# ======================================================
-# 💰 BUDGET
-# ======================================================
-with tabs[2]:
+# =========================
+# TAB 3 – BUDGETS
+# =========================
+with tab3:
     st.subheader("Budgets")
 
-    df_bud = load_budgets()
-    st.dataframe(df_bud, use_container_width=True)
+    st.dataframe(df_bud_y, use_container_width=True)
 
-    with st.expander("➕ Ajouter / modifier un budget"):
-        an = st.number_input("Année", step=1)
-        grp = st.text_input("Groupe de compte")
-        bud = st.number_input("Budget", step=100.0)
+    st.markdown("### ➕ Ajouter / modifier un budget")
+    with st.form("budget_form"):
+        an = st.number_input("Année", value=int(annee))
+        compte = st.selectbox("Compte", sorted(df_plan["compte_8"].unique()))
+        montant = st.number_input("Montant", min_value=0.0)
 
-        if st.button("Enregistrer le budget"):
+        submit = st.form_submit_button("Enregistrer")
+
+        if submit:
             supabase.table("budgets").upsert({
                 "annee": an,
-                "groupe_compte": grp,
-                "budget": bud
+                "compte_8": compte,
+                "montant": montant
             }).execute()
+            st.cache_data.clear()
             st.success("Budget enregistré")
