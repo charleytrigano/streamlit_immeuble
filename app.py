@@ -73,7 +73,7 @@ def upload_facture(annee: int, depense_id: str, uploaded_file) -> str | None:
 
 
 # =========================
-# FILTRES
+# SIDEBAR — FILTRES
 # =========================
 st.sidebar.title("Filtres")
 
@@ -102,17 +102,44 @@ except Exception as e:
 df = pd.DataFrame(depenses_data)
 
 # On s'assure que certaines colonnes existent au moins vides
-for col in ["date", "compte", "fournisseur", "montant_ttc", "commentaire", "facture_path"]:
+for col in [
+    "date",
+    "compte",
+    "poste",
+    "fournisseur",
+    "montant_ttc",
+    "commentaire",
+    "facture_path",
+]:
     if col not in df.columns:
         df[col] = None
 
-# Colonnes types
+# Types
 df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce").fillna(0.0)
 
 # Colonne lien facture (Markdown cliquable)
 df["facture"] = df["facture_path"].apply(
     lambda p: f"[📄 Voir]({get_facture_public_url(p)})" if p else ""
 )
+
+# =========================
+# FILTRE PAR POSTE (AVANCÉ)
+# =========================
+st.sidebar.markdown("### Filtres avancés")
+
+if df.empty:
+    poste_filtre = "Tous"
+else:
+    postes_uniques = sorted(
+        [p for p in df["poste"].dropna().unique().tolist() if str(p).strip() != ""]
+    )
+    poste_filtre = st.sidebar.selectbox(
+        "Poste", ["Tous"] + postes_uniques
+    )
+
+# Application du filtre poste
+if poste_filtre != "Tous":
+    df = df[df["poste"] == poste_filtre]
 
 
 # =========================
@@ -121,7 +148,7 @@ df["facture"] = df["facture_path"].apply(
 st.markdown("### 🔎 Synthèse des charges réelles")
 
 if df.empty:
-    st.info(f"Aucune dépense pour l'année {annee}.")
+    st.info(f"Aucune dépense pour l'année {annee} avec ces filtres.")
     total = 0.0
     n = 0
     moy = 0.0
@@ -150,16 +177,48 @@ st.markdown("---")
 
 
 # =========================
-# TABLEAU DES DÉPENSES
+# DÉPENSES PAR POSTE (SYNTHÈSE)
+# =========================
+st.markdown("### 📊 Synthèse par poste")
+
+if df.empty:
+    st.info("Aucune dépense à afficher par poste.")
+else:
+    df_poste = (
+        df.groupby("poste", as_index=False)
+        .agg(
+            montant_total=("montant_ttc", "sum"),
+            nb_lignes=("id", "count") if "id" in df.columns else ("montant_ttc", "count"),
+        )
+        .sort_values("montant_total", ascending=False)
+    )
+
+    st.dataframe(
+        df_poste.rename(
+            columns={
+                "poste": "Poste",
+                "montant_total": "Montant total (€)",
+                "nb_lignes": "Nombre de lignes",
+            }
+        ),
+        use_container_width=True,
+    )
+
+st.markdown("---")
+
+
+# =========================
+# TABLEAU DÉTAILLÉ DES DÉPENSES
 # =========================
 st.markdown("### 📋 Détails des dépenses")
 
 if df.empty:
-    st.info(f"Aucune dépense pour l'année {annee}.")
+    st.info(f"Aucune dépense pour l'année {annee} avec ces filtres.")
 else:
     colonnes_affichage = [
         "date",
         "compte",
+        "poste",
         "fournisseur",
         "montant_ttc",
         "commentaire",
@@ -171,6 +230,7 @@ else:
             columns={
                 "date": "Date",
                 "compte": "Compte",
+                "poste": "Poste",
                 "fournisseur": "Fournisseur",
                 "montant_ttc": "Montant TTC",
                 "commentaire": "Commentaire",
@@ -194,9 +254,10 @@ with st.form("form_ajout"):
 
     date_dep = col_a.date_input("Date", value=date.today())
     compte_dep = col_b.text_input("Compte")
-    fournisseur_dep = col_c.text_input("Fournisseur")
-    montant_dep = col_d.number_input("Montant TTC", min_value=0.0, step=0.01)
-    commentaire_dep = col_e.text_input("Commentaire", value="", placeholder="Optionnel")
+    poste_dep = col_c.text_input("Poste")
+    fournisseur_dep = col_d.text_input("Fournisseur")
+    montant_dep = col_e.number_input("Montant TTC", min_value=0.0, step=0.01)
+    commentaire_dep = st.text_input("Commentaire", value="", placeholder="Optionnel")
     fichier_dep = st.file_uploader("Facture (PDF, JPG, PNG…)", type=None)
 
     submitted_ajout = st.form_submit_button("Enregistrer la dépense")
@@ -211,6 +272,7 @@ if submitted_ajout:
                     "annee": annee,
                     "date": str(date_dep),
                     "compte": compte_dep,
+                    "poste": poste_dep,
                     "fournisseur": fournisseur_dep,
                     "montant_ttc": float(montant_dep),
                     "commentaire": commentaire_dep,
@@ -269,16 +331,17 @@ else:
             "Date", value=pd.to_datetime(row_sel["date"]).date()
         )
         compte_edit = col2.text_input("Compte", value=row_sel["compte"] or "")
-        fournisseur_edit = col3.text_input(
+        poste_edit = col3.text_input("Poste", value=row_sel["poste"] or "")
+        fournisseur_edit = col4.text_input(
             "Fournisseur", value=row_sel["fournisseur"] or ""
         )
-        montant_edit = col4.number_input(
+        montant_edit = col5.number_input(
             "Montant TTC",
             min_value=0.0,
             step=0.01,
             value=float(row_sel["montant_ttc"] or 0.0),
         )
-        commentaire_edit = col5.text_input(
+        commentaire_edit = st.text_input(
             "Commentaire", value=row_sel["commentaire"] or ""
         )
         fichier_edit = st.file_uploader(
@@ -294,6 +357,7 @@ else:
             update_data = {
                 "date": str(date_edit),
                 "compte": compte_edit,
+                "poste": poste_edit,
                 "fournisseur": fournisseur_edit,
                 "montant_ttc": float(montant_edit),
                 "commentaire": commentaire_edit,
