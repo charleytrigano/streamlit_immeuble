@@ -17,7 +17,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 # =========================
 def euro(x):
     if pd.isna(x):
-        return "0 €"
+        return "0,00 €"
     return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
 # =========================
@@ -25,15 +25,17 @@ def euro(x):
 # =========================
 @st.cache_data(ttl=300)
 def load_depenses():
-    res = supabase.table("depenses").select("*").execute()
-    df = pd.DataFrame(res.data)
-    return df
+    res = supabase.table("depenses").select(
+        "date, annee, poste, compte, fournisseur, lot, montant_ttc, facture_url, commentaire"
+    ).execute()
+    return pd.DataFrame(res.data)
 
 @st.cache_data(ttl=300)
 def load_lots():
-    res = supabase.table("lots").select("*").execute()
-    df = pd.DataFrame(res.data)
-    return df
+    res = supabase.table("lots").select(
+        "lot, batiment, etage, tantiemes"
+    ).execute()
+    return pd.DataFrame(res.data)
 
 # =========================
 # MAIN
@@ -49,21 +51,20 @@ def main():
         return
 
     # =========================
-    # NORMALISATION TYPES (OBLIGATOIRE)
+    # NORMALISATION
     # =========================
-    df_dep["lot_id"] = df_dep["lot_id"].astype(str)
-    df_lots["lot_id"] = df_lots["lot_id"].astype(str)
+    df_dep["lot"] = df_dep["lot"].astype(str).str.strip()
+    df_lots["lot"] = df_lots["lot"].astype(str).str.strip()
 
     df_dep["montant_ttc"] = pd.to_numeric(df_dep["montant_ttc"], errors="coerce")
 
     # =========================
-    # MERGE
+    # MERGE PROPRE (SUR CLÉ MÉTIER)
     # =========================
     df = df_dep.merge(
         df_lots,
-        on="lot_id",
-        how="left",
-        suffixes=("", "_lot")
+        on="lot",
+        how="left"
     )
 
     # =========================
@@ -87,6 +88,7 @@ def main():
             "fournisseur",
             "lot",
             "batiment",
+            "etage",
             "tantiemes",
             "montant_ttc",
             "facture_url",
@@ -103,6 +105,7 @@ def main():
             "fournisseur": "Fournisseur",
             "lot": "Lot",
             "batiment": "Bâtiment",
+            "etage": "Étage",
             "tantiemes": "Tantièmes",
             "montant_ttc": "Montant TTC",
             "facture_url": "Facture",
@@ -111,7 +114,7 @@ def main():
     )
 
     df_display["Facture"] = df_display["Facture"].apply(
-        lambda x: f"[Voir]({x})" if pd.notna(x) and x != "" else ""
+        lambda x: f"[📄 Voir]({x})" if pd.notna(x) and x != "" else ""
     )
 
     df_display["Montant TTC"] = df_display["Montant TTC"].apply(euro)
