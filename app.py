@@ -54,7 +54,7 @@ df_bud_y = df_bud[df_bud["annee"] == annee]
 # KPIs
 # =========================
 dep_total = df_dep_y["montant_ttc"].sum()
-bud_total = df_bud_y["montant"].sum() if not df_bud_y.empty else 0
+bud_total = df_bud_y["budget"].sum() if not df_bud_y.empty else 0
 ecart = bud_total - dep_total
 
 c1, c2, c3 = st.columns(3)
