@@ -6,14 +6,12 @@ from supabase import create_client
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(
-    page_title="Pilotage des charges",
-    layout="wide"
-)
+st.set_page_config(page_title="Pilotage des charges", layout="wide")
 
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_ANON_KEY"]
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(
+    st.secrets["SUPABASE_URL"],
+    st.secrets["SUPABASE_ANON_KEY"],
+)
 
 BUCKET_FACTURES = "factures"
 
@@ -44,8 +42,12 @@ def upload_facture(file):
 
 def facture_url(path):
     if not path:
-        return None
+        return ""
     return supabase.storage.from_(BUCKET_FACTURES).get_public_url(path)
+
+def safe_columns(df, wanted):
+    """Retourne uniquement les colonnes qui existent vraiment"""
+    return [c for c in wanted if c in df.columns]
 
 # =========================
 # SIDEBAR
@@ -61,11 +63,7 @@ page = st.sidebar.radio(
     ],
 )
 
-annee = st.sidebar.selectbox(
-    "Année",
-    [2023, 2024, 2025, 2026],
-    index=2,
-)
+annee = st.sidebar.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
 
 # =========================
 # 📄 ÉTAT DES DÉPENSES
@@ -75,30 +73,33 @@ if page == "📄 État des dépenses":
 
     df = load_table("depenses", {"annee": annee})
 
-    if not df.empty:
-        df["facture"] = df["facture_path"].apply(facture_url)
+    if df.empty:
+        st.info("Aucune dépense")
+    else:
+        if "facture_path" in df.columns:
+            df["facture"] = df["facture_path"].apply(facture_url)
 
-        st.dataframe(
-            df[
-                [
-                    "date",
-                    "poste",
-                    "groupe_compte",
-                    "compte",
-                    "fournisseur",
-                    "montant_ttc",
-                    "commentaire",
-                    "facture",
-                ]
+        cols = safe_columns(
+            df,
+            [
+                "date",
+                "poste",
+                "groupe_compte",
+                "compte",
+                "fournisseur",
+                "montant_ttc",
+                "commentaire",
+                "facture",
             ],
-            use_container_width=True,
         )
+
+        st.dataframe(df[cols], use_container_width=True)
 
     st.divider()
     st.subheader("➕ Ajouter / Modifier une dépense")
 
     with st.form("depense_form"):
-        dep_id = st.text_input("ID (laisser vide pour création)")
+        dep_id = st.text_input("ID (vide = création)")
         date = st.date_input("Date")
         poste = st.text_input("Poste")
         groupe = st.text_input("Groupe de compte")
@@ -106,13 +107,11 @@ if page == "📄 État des dépenses":
         fournisseur = st.text_input("Fournisseur")
         montant = st.number_input("Montant TTC", min_value=0.0, step=0.01)
         commentaire = st.text_area("Commentaire")
-        facture = st.file_uploader("Facture (PDF / image)", type=["pdf", "jpg", "png"])
+        facture = st.file_uploader("Facture", type=["pdf", "jpg", "png"])
 
         submit = st.form_submit_button("Enregistrer")
 
     if submit:
-        facture_path = upload_facture(facture) if facture else None
-
         payload = {
             "date": str(date),
             "annee": annee,
@@ -124,8 +123,8 @@ if page == "📄 État des dépenses":
             "commentaire": commentaire,
         }
 
-        if facture_path:
-            payload["facture_path"] = facture_path
+        if facture:
+            payload["facture_path"] = upload_facture(facture)
 
         if dep_id:
             supabase.table("depenses").update(payload).eq("id", dep_id).execute()
@@ -141,11 +140,10 @@ if page == "📄 État des dépenses":
 # =========================
 elif page == "🚨 Contrôle de répartition":
     st.title("🚨 Contrôle de répartition")
-
     df = load_view("v_controle_repartition")
 
     if df.empty:
-        st.success("Toutes les dépenses sont correctement réparties 🎉")
+        st.success("Toutes les dépenses sont réparties à 100 % ✅")
     else:
         st.error("Certaines dépenses ne sont PAS réparties à 100 %")
         st.dataframe(df, use_container_width=True)
@@ -155,38 +153,27 @@ elif page == "🚨 Contrôle de répartition":
 # =========================
 elif page == "💰 Budget":
     st.title("💰 Budget")
-
     df = load_table("budgets", {"annee": annee})
 
     if df.empty:
-        st.warning("Aucun budget pour cette année")
+        st.warning("Aucun budget défini")
     else:
         st.metric("Budget total", euro(df["budget"].sum()))
-        st.dataframe(
-            df[["groupe_compte", "compte", "budget"]],
-            use_container_width=True,
-        )
+        st.dataframe(df, use_container_width=True)
 
 # =========================
 # 📊 BUDGET VS RÉEL
 # =========================
 elif page == "📊 Budget vs Réel":
     st.title("📊 Budget vs Réel")
-
     df = load_view("v_budget_vs_reel")
 
     if df.empty:
         st.warning("Aucune donnée")
     else:
-        charges_reelles = df["charges_reelles"].sum()
-        charges_reparties = df["charges_reparties"].sum()
-        budget = df["budget"].sum()
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Budget", euro(budget))
-        c2.metric("Charges réelles", euro(charges_reelles))
-        c3.metric("Écart", euro(budget - charges_reelles))
-
+        st.metric("Charges réelles", euro(df["charges_reelles"].sum()))
+        st.metric("Charges réparties", euro(df["charges_reparties"].sum()))
+        st.metric("Budget", euro(df["budget"].sum()))
         st.dataframe(df, use_container_width=True)
 
 # =========================
@@ -194,11 +181,10 @@ elif page == "📊 Budget vs Réel":
 # =========================
 elif page == "📈 Statistiques":
     st.title("📈 Statistiques")
-
     df = load_table("depenses", {"annee": annee})
 
     if df.empty:
         st.warning("Aucune dépense")
     else:
         st.metric("Nombre de dépenses", len(df))
-        st.metric("Montant total facturé", euro(df["montant_ttc"].sum()))
+        st.metric("Montant total", euro(df["montant_ttc"].sum()))
