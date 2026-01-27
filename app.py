@@ -31,6 +31,7 @@ def euro(x):
     return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
 def groupe_compte(compte: str) -> str:
+    compte = str(compte)
     if compte in {"6211", "6213", "6222", "6223"}:
         return compte[:4]
     return compte[:3]
@@ -45,7 +46,7 @@ def load_depenses():
     )
     df["date"] = pd.to_datetime(df["date"])
     df["annee"] = df["date"].dt.year
-    df["groupe"] = df["compte"].astype(str).apply(groupe_compte)
+    df["groupe_compte"] = df["compte"].apply(groupe_compte)
     return df
 
 @st.cache_data
@@ -81,25 +82,24 @@ st.sidebar.title("🔎 Filtres")
 
 annee = st.sidebar.selectbox(
     "Année",
-    sorted(df_dep["annee"].unique()),
-    index=0
+    sorted(df_dep["annee"].unique())
 )
 
 df_f = df_dep[df_dep["annee"] == annee]
 
 compte = st.sidebar.selectbox(
     "Compte",
-    ["Tous"] + sorted(df_f["compte"].dropna().unique().tolist())
+    ["Tous"] + sorted(df_f["compte"].dropna().unique())
 )
 
 fournisseur = st.sidebar.selectbox(
     "Fournisseur",
-    ["Tous"] + sorted(df_f["fournisseur"].dropna().unique().tolist())
+    ["Tous"] + sorted(df_f["fournisseur"].dropna().unique())
 )
 
 poste = st.sidebar.selectbox(
-    "Poste / Groupe",
-    ["Tous"] + sorted(df_f["poste"].dropna().unique().tolist())
+    "Poste",
+    ["Tous"] + sorted(df_f["poste"].dropna().unique())
 )
 
 if compte != "Tous":
@@ -128,18 +128,18 @@ tab_dep, tab_bud, tab_bvr, tab_stats, tab_ctrl = st.tabs([
 with tab_dep:
     st.subheader("📄 État des dépenses")
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total dépenses", euro(df_f["montant_ttc"].sum()))
-    col2.metric("Nombre de lignes", len(df_f))
-    col3.metric("Dépense moyenne", euro(df_f["montant_ttc"].mean() if len(df_f) else 0))
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total dépenses", euro(df_f["montant_ttc"].sum()))
+    c2.metric("Nombre de lignes", len(df_f))
+    c3.metric("Dépense moyenne", euro(df_f["montant_ttc"].mean() if len(df_f) else 0))
 
-    df_display = df_f.copy()
-    df_display["Facture"] = df_display["facture_url"].apply(
+    df_view = df_f.copy()
+    df_view["Facture"] = df_view["facture_url"].apply(
         lambda x: f"[📎 Ouvrir]({x})" if pd.notna(x) else ""
     )
 
     st.dataframe(
-        df_display[[
+        df_view[[
             "date",
             "compte",
             "poste",
@@ -159,12 +159,12 @@ with tab_bud:
 
     df_bud_y = df_bud[df_bud["annee"] == annee]
 
-    col1, col2 = st.columns(2)
-    col1.metric("Budget total", euro(df_bud_y["montant"].sum()))
-    col2.metric("Nombre de postes", len(df_bud_y))
+    c1, c2 = st.columns(2)
+    c1.metric("Budget total", euro(df_bud_y["budget"].sum()))
+    c2.metric("Nombre de lignes", len(df_bud_y))
 
     st.dataframe(
-        df_bud_y[["compte", "poste", "montant"]],
+        df_bud_y[["compte", "groupe_compte", "budget"]],
         use_container_width=True
     )
 
@@ -176,33 +176,32 @@ with tab_bvr:
 
     reel = (
         df_f
-        .groupby("groupe", as_index=False)
+        .groupby("groupe_compte", as_index=False)
         .agg(reel=("montant_ttc", "sum"))
     )
 
     budget = (
         df_bud_y
-        .assign(groupe=lambda d: d["compte"].astype(str).apply(groupe_compte))
-        .groupby("groupe", as_index=False)
-        .agg(budget=("montant", "sum"))
+        .groupby("groupe_compte", as_index=False)
+        .agg(budget=("budget", "sum"))
     )
 
     df_cmp = (
         budget
-        .merge(reel, on="groupe", how="outer")
+        .merge(reel, on="groupe_compte", how="outer")
         .fillna(0)
     )
 
     df_cmp["écart"] = df_cmp["budget"] - df_cmp["reel"]
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Budget", euro(df_cmp["budget"].sum()))
-    col2.metric("Réel", euro(df_cmp["reel"].sum()))
-    col3.metric("Écart", euro(df_cmp["écart"].sum()))
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Budget", euro(df_cmp["budget"].sum()))
+    c2.metric("Réel", euro(df_cmp["reel"].sum()))
+    c3.metric("Écart", euro(df_cmp["écart"].sum()))
 
     st.dataframe(
         df_cmp.rename(columns={
-            "groupe": "Groupe",
+            "groupe_compte": "Groupe",
             "budget": "Budget (€)",
             "reel": "Réel (€)",
             "écart": "Écart (€)"
@@ -238,7 +237,9 @@ with tab_ctrl:
         .merge(df_dep[["id", "montant_ttc"]], left_on="depense_id", right_on="id")
     )
 
-    df_r["montant_reparti"] = df_r["montant_ttc"] * df_r["quote_part"] / BASE_TANTIEMES
+    df_r["montant_reparti"] = (
+        df_r["montant_ttc"] * df_r["quote_part"] / BASE_TANTIEMES
+    )
 
     ctrl = (
         df_r
