@@ -168,4 +168,4 @@ with tab_plan:
         use_container_width=True
     )
 
-    st.info("Plan comptable verrouillé – modification via base uniquement")
+   
