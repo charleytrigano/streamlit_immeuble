@@ -1,26 +1,41 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
 
 
 def depenses_ui(supabase):
     st.title("📄 État des dépenses")
 
     # =========================
-    # CHARGEMENT DES DONNÉES
+    # CHARGEMENT DEPENSES
     # =========================
-    res = supabase.table("depenses").select("*").execute()
-    df = pd.DataFrame(res.data or [])
+    dep_res = supabase.table("depenses").select("*").execute()
+    df = pd.DataFrame(dep_res.data or [])
 
     if df.empty:
         st.warning("Aucune dépense trouvée")
         return
 
-    # =========================
-    # NORMALISATION
-    # =========================
     df["date"] = pd.to_datetime(df["date"])
     df["annee"] = df["annee"].astype(int)
+
+    # =========================
+    # CHARGEMENT PLAN COMPTABLE
+    # =========================
+    plan_res = supabase.table("plan_comptable") \
+        .select("compte_8, groupe_compte, libelle_groupe") \
+        .execute()
+
+    df_plan = pd.DataFrame(plan_res.data or [])
+
+    # =========================
+    # JOINTURE DEPENSES ↔ PLAN
+    # =========================
+    df = df.merge(
+        df_plan,
+        left_on="compte",
+        right_on="compte_8",
+        how="left"
+    )
 
     # =========================
     # SIDEBAR – FILTRES
@@ -42,12 +57,12 @@ def depenses_ui(supabase):
     if comptes:
         df_f = df_f[df_f["compte"].isin(comptes)]
 
-    postes = st.sidebar.multiselect(
-        "Poste",
-        sorted(df_f["poste"].dropna().unique())
+    groupes = st.sidebar.multiselect(
+        "Groupe de compte",
+        sorted(df_f["libelle_groupe"].dropna().unique())
     )
-    if postes:
-        df_f = df_f[df_f["poste"].isin(postes)]
+    if groupes:
+        df_f = df_f[df_f["libelle_groupe"].isin(groupes)]
 
     fournisseurs = st.sidebar.multiselect(
         "Fournisseur",
@@ -56,40 +71,23 @@ def depenses_ui(supabase):
     if fournisseurs:
         df_f = df_f[df_f["fournisseur"].isin(fournisseurs)]
 
-    date_min = st.sidebar.date_input(
-        "Date début",
-        df_f["date"].min().date()
-    )
-    date_max = st.sidebar.date_input(
-        "Date fin",
-        df_f["date"].max().date()
-    )
-
-    df_f = df_f[
-        (df_f["date"] >= pd.to_datetime(date_min)) &
-        (df_f["date"] <= pd.to_datetime(date_max))
-    ]
-
     # =========================
-    # KPI – DÉPENSES
+    # KPI DEPENSES
     # =========================
     total_dep = df_f["montant_ttc"].sum()
     nb_lignes = len(df_f)
     dep_moy = total_dep / nb_lignes if nb_lignes else 0
 
     # =========================
-    # KPI – BUDGET
+    # KPI BUDGET (PAR GROUPE)
     # =========================
-    groupes = df_f["groupe_compte"].dropna().unique().tolist()
+    groupes_codes = df_f["groupe_compte"].dropna().unique().tolist()
 
-    bud_res = (
-        supabase
-        .table("budgets")
-        .select("budget")
-        .eq("annee", annee)
-        .in_("groupe_compte", groupes)
+    bud_res = supabase.table("budgets") \
+        .select("budget") \
+        .eq("annee", annee) \
+        .in_("groupe_compte", groupes_codes) \
         .execute()
-    )
 
     df_bud = pd.DataFrame(bud_res.data or [])
 
@@ -112,7 +110,7 @@ def depenses_ui(supabase):
     st.divider()
 
     # =========================
-    # TABLEAU DÉPENSES
+    # TABLEAU
     # =========================
     st.dataframe(
         df_f[
@@ -120,13 +118,13 @@ def depenses_ui(supabase):
                 "date",
                 "compte",
                 "poste",
+                "libelle_groupe",
                 "fournisseur",
                 "montant_ttc",
-                "type",
                 "commentaire"
             ]
         ].sort_values("date"),
         use_container_width=True
     )
 
-    st.success("Module dépenses chargé correctement ✅")
+    st.success("État des dépenses chargé correctement ✅")
