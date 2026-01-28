@@ -1,175 +1,148 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
 
 
-# =========================
-# UI ÉTAT DES DÉPENSES
-# =========================
 def depenses_ui(supabase):
-
-    st.header("📄 État des dépenses")
+    st.title("📄 État des dépenses")
 
     # =========================
-    # CHARGEMENT DONNÉES
+    # 1. Chargement des données
     # =========================
-    resp = supabase.table("depenses").select("*").execute()
-    df = pd.DataFrame(resp.data)
 
-    if df.empty:
-        st.warning("Aucune dépense enregistrée.")
+    depenses = supabase.table("v_depenses_enrichies").select("*").execute().data
+    budgets = supabase.table("v_budget_vs_reel").select("*").execute().data
+
+    if not depenses:
+        st.warning("Aucune dépense trouvée")
         return
 
-    # =========================
-    # NORMALISATION
-    # =========================
-    df["annee"] = pd.to_numeric(df["annee"], errors="coerce")
-    df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce").fillna(0)
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df_dep = pd.DataFrame(depenses)
+    df_budget = pd.DataFrame(budgets)
 
     # =========================
-    # FILTRES
+    # 2. Normalisation
     # =========================
-    st.subheader("🔎 Filtres")
 
-    colf1, colf2, colf3, colf4 = st.columns(4)
+    df_dep["annee"] = df_dep["annee"].astype(int)
+    df_dep["montant_ttc"] = pd.to_numeric(df_dep["montant_ttc"], errors="coerce").fillna(0)
 
-    with colf1:
-        annee = st.selectbox(
-            "Année",
-            sorted(df["annee"].dropna().unique().tolist()),
-        )
-
-    df_f = df[df["annee"] == annee]
-
-    with colf2:
-        compte = st.selectbox(
-            "Compte",
-            ["Tous"] + sorted(df_f["compte"].dropna().unique().tolist())
-        )
-
-    if compte != "Tous":
-        df_f = df_f[df_f["compte"] == compte]
-
-    with colf3:
-        fournisseur = st.selectbox(
-            "Fournisseur",
-            ["Tous"] + sorted(df_f["fournisseur"].dropna().unique().tolist())
-        )
-
-    if fournisseur != "Tous":
-        df_f = df_f[df_f["fournisseur"] == fournisseur]
-
-    with colf4:
-        poste = st.selectbox(
-            "Poste",
-            ["Tous"] + sorted(df_f["poste"].dropna().unique().tolist())
-        )
-
-    if poste != "Tous":
-        df_f = df_f[df_f["poste"] == poste]
+    if not df_budget.empty:
+        df_budget["annee"] = df_budget["annee"].astype(int)
+        df_budget["budget"] = pd.to_numeric(df_budget["budget"], errors="coerce").fillna(0)
+        df_budget["reel"] = pd.to_numeric(df_budget["reel"], errors="coerce").fillna(0)
+        df_budget["ecart"] = pd.to_numeric(df_budget["ecart"], errors="coerce").fillna(0)
 
     # =========================
-    # KPI
+    # 3. Filtres (SIDEBAR)
     # =========================
-    st.subheader("📊 Indicateurs")
 
-    total_dep = df_f["montant_ttc"].sum()
-    nb_dep = len(df_f)
-    dep_moy = total_dep / nb_dep if nb_dep else 0
+    st.sidebar.header("🎛️ Filtres")
 
-    col1, col2, col3 = st.columns(3)
+    annees = sorted(df_dep["annee"].dropna().unique())
+    annee_sel = st.sidebar.multiselect(
+        "Année", annees, default=annees
+    )
 
-    col1.metric("Total dépenses (€)", f"{total_dep:,.2f} €".replace(",", " ").replace(".", ","))
-    col2.metric("Nombre de lignes", nb_dep)
-    col3.metric("Dépense moyenne (€)", f"{dep_moy:,.2f} €".replace(",", " ").replace(".", ","))
+    groupes = sorted(df_dep["groupe_compte"].dropna().unique())
+    groupe_sel = st.sidebar.multiselect(
+        "Groupe de charges", groupes, default=groupes
+    )
+
+    comptes = sorted(df_dep["compte"].dropna().unique())
+    compte_sel = st.sidebar.multiselect(
+        "Compte comptable", comptes, default=comptes
+    )
+
+    lots = sorted(df_dep["lot_id"].dropna().unique())
+    lot_sel = st.sidebar.multiselect(
+        "Lot", lots, default=lots
+    )
 
     # =========================
-    # TABLEAU
+    # 4. Application filtres
     # =========================
-    st.subheader("📋 Liste des dépenses")
 
-    df_display = df_f.copy()
+    df_f = df_dep[
+        (df_dep["annee"].isin(annee_sel)) &
+        (df_dep["groupe_compte"].isin(groupe_sel)) &
+        (df_dep["compte"].isin(compte_sel)) &
+        (df_dep["lot_id"].isin(lot_sel))
+    ]
 
-    # Lien facture cliquable
-    def make_link(row):
-        if pd.notna(row["facture_url"]) and row["facture_url"]:
-            return f"[Voir]({row['facture_url']})"
-        if pd.notna(row["facture_path"]) and row["facture_path"]:
-            return f"[Voir]({row['facture_path']})"
-        return ""
+    # =========================
+    # 5. KPI GLOBAUX
+    # =========================
 
-    df_display["Facture"] = df_display.apply(make_link, axis=1)
+    total_depenses = df_f["montant_ttc"].sum()
+    nb_lignes = len(df_f)
+    depense_moy = df_f["montant_ttc"].mean() if nb_lignes > 0 else 0
+
+    total_budget = df_budget[
+        (df_budget["annee"].isin(annee_sel)) &
+        (df_budget["groupe_compte"].isin(groupe_sel))
+    ]["budget"].sum()
+
+    ecart_global = total_depenses - total_budget
+    taux_budget = (
+        (total_depenses / total_budget) * 100
+        if total_budget > 0 else None
+    )
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+
+    c1.metric("💰 Dépenses réelles", f"{total_depenses:,.2f} €")
+    c2.metric("📊 Budget", f"{total_budget:,.2f} €")
+    c3.metric("📉 Écart", f"{ecart_global:,.2f} €")
+    c4.metric("📈 % budget", f"{taux_budget:.2f} %" if taux_budget else "—")
+    c5.metric("📄 Lignes", nb_lignes)
+
+    st.divider()
+
+    # =========================
+    # 6. Tableau BUDGET vs RÉEL par groupe
+    # =========================
+
+    st.subheader("📊 Budget vs Réel par groupe")
+
+    df_kpi = df_budget[
+        (df_budget["annee"].isin(annee_sel)) &
+        (df_budget["groupe_compte"].isin(groupe_sel))
+    ].copy()
+
+    df_kpi = df_kpi.sort_values("groupe_compte")
 
     st.dataframe(
-        df_display[
-            [
-                "date",
-                "compte",
-                "poste",
-                "fournisseur",
-                "montant_ttc",
-                "type",
-                "commentaire",
-                "Facture",
-            ]
-        ].sort_values("date", ascending=False),
+        df_kpi[[
+            "annee",
+            "groupe_compte",
+            "libelle_groupe",
+            "budget",
+            "reel",
+            "ecart",
+            "taux_budget"
+        ]],
         use_container_width=True
     )
 
-    # =========================
-    # AJOUT
-    # =========================
-    st.subheader("➕ Ajouter une dépense")
-
-    with st.form("add_depense"):
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            f_date = st.date_input("Date", value=date.today())
-            f_compte = st.text_input("Compte")
-
-        with c2:
-            f_poste = st.text_input("Poste")
-            f_fournisseur = st.text_input("Fournisseur")
-
-        with c3:
-            f_montant = st.number_input("Montant TTC", step=0.01)
-            f_type = st.selectbox("Type", ["Charge", "Avoir", "Remboursement"])
-
-        f_commentaire = st.text_area("Commentaire")
-        f_facture_url = st.text_input("Lien facture (URL)")
-
-        submit = st.form_submit_button("Enregistrer")
-
-        if submit:
-            supabase.table("depenses").insert({
-                "annee": int(f_date.year),
-                "date": f_date.isoformat(),
-                "compte": f_compte,
-                "poste": f_poste,
-                "fournisseur": f_fournisseur,
-                "montant_ttc": f_montant,
-                "type": f_type,
-                "commentaire": f_commentaire,
-                "facture_url": f_facture_url,
-            }).execute()
-
-            st.success("Dépense ajoutée")
-            st.rerun()
+    st.divider()
 
     # =========================
-    # SUPPRESSION
+    # 7. Tableau DÉTAIL DES DÉPENSES
     # =========================
-    st.subheader("🗑 Supprimer une dépense")
 
-    dep_id = st.selectbox(
-        "Sélectionner une dépense",
-        df_f["depense_id"].tolist(),
-        format_func=lambda x: f"{x}"
-    )
+    st.subheader("📋 Détail des dépenses")
 
-    if st.button("Supprimer"):
-        supabase.table("depenses").delete().eq("depense_id", dep_id).execute()
-        st.success("Dépense supprimée")
-        st.rerun()
+    df_aff = df_f[[
+        "date",
+        "annee",
+        "groupe_compte",
+        "libelle_groupe",
+        "compte",
+        "poste",
+        "fournisseur",
+        "montant_ttc",
+        "lot_id",
+        "commentaire"
+    ]].sort_values("date", ascending=False)
+
+    st.dataframe(df_aff, use_container_width=True)
