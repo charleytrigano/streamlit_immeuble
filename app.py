@@ -18,7 +18,7 @@ st.title("🏢 Pilotage de l’immeuble")
 SUPABASE_URL = st.secrets["supabase"]["url"]
 SUPABASE_Anon_KEY = st.secrets["supabase"]["key"]
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 # =========================
 # IMPORT DES UI
