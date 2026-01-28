@@ -1,12 +1,6 @@
 import streamlit as st
 from supabase import create_client
 
-
-
-from utils.budget_vs_reel_ui import budget_vs_reel_ui
-budget_vs_reel_ui(supabase, annee)
-
-
 # =========================
 # CONFIG STREAMLIT
 # =========================
@@ -16,7 +10,7 @@ st.set_page_config(
 )
 
 # =========================
-# SUPABASE (ANON KEY ONLY)
+# SUPABASE
 # =========================
 @st.cache_resource
 def get_supabase():
@@ -26,7 +20,7 @@ def get_supabase():
     except KeyError:
         st.error(
             "❌ Supabase mal configuré.\n\n"
-            "Vérifie `.streamlit/secrets.toml` :\n\n"
+            "Vérifie `.streamlit/secrets.toml` avec :\n\n"
             "SUPABASE_URL\n"
             "SUPABASE_ANON_KEY"
         )
@@ -52,13 +46,17 @@ def main():
     )
 
     # =========================
-    # ONGLET PRINCIPAL
+    # TITRE
     # =========================
     st.title("📊 Pilotage des charges de l’immeuble")
 
-    tab_dep, tab_bud, tab_plan, tab_lots = st.tabs([
+    # =========================
+    # ONGLET PRINCIPAL
+    # =========================
+    tab_dep, tab_bud, tab_bvr, tab_plan, tab_lots = st.tabs([
         "📄 Dépenses",
         "💰 Budget",
+        "📊 Budget vs Réel",
         "📘 Plan comptable",
         "🏢 Lots"
     ])
@@ -71,7 +69,7 @@ def main():
             from utils.depenses_ui import depenses_ui
             depenses_ui(supabase, annee)
         except Exception as e:
-            st.error("Erreur module Dépenses")
+            st.error("❌ Erreur dans le module Dépenses")
             st.exception(e)
 
     # =========================
@@ -82,7 +80,18 @@ def main():
             from utils.budget_ui import budget_ui
             budget_ui(supabase, annee)
         except Exception as e:
-            st.error("Erreur module Budget")
+            st.error("❌ Erreur dans le module Budget")
+            st.exception(e)
+
+    # =========================
+    # BUDGET VS RÉEL
+    # =========================
+    with tab_bvr:
+        try:
+            from utils.budget_vs_reel_ui import budget_vs_reel_ui
+            budget_vs_reel_ui(supabase, annee)
+        except Exception as e:
+            st.error("❌ Erreur dans le module Budget vs Réel")
             st.exception(e)
 
     # =========================
@@ -93,7 +102,7 @@ def main():
             from utils.plan_comptable_ui import plan_comptable_ui
             plan_comptable_ui(supabase)
         except Exception as e:
-            st.error("Erreur module Plan comptable")
+            st.error("❌ Erreur dans le module Plan comptable")
             st.exception(e)
 
     # =========================
@@ -104,7 +113,7 @@ def main():
             from utils.lots_ui import lots_ui
             lots_ui(supabase)
         except Exception as e:
-            st.error("Erreur module Lots")
+            st.error("❌ Erreur dans le module Lots")
             st.exception(e)
 
 # =========================
