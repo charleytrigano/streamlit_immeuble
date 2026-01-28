@@ -10,7 +10,7 @@ st.set_page_config(page_title="Pilotage des charges", layout="wide")
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_ANON_KEY"]
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 COL_DEP_MONTANT = "montant_ttc"
 
