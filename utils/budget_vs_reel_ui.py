@@ -25,7 +25,7 @@ def budget_vs_reel_ui(supabase, annee):
     ).eq("annee", annee).execute().data
 
     plan = supabase.table("plan_comptable").select(
-        "compte_8, groupe_compte, libelle_groupe"
+        "compte_8, groupe_compte, libelle, libelle_groupe"
     ).execute().data
 
     df_dep = pd.DataFrame(dep)
@@ -37,7 +37,7 @@ def budget_vs_reel_ui(supabase, annee):
         return
 
     # =========================
-    # RATTACHEMENT DES DÉPENSES AU GROUPE
+    # RATTACHEMENT DES DÉPENSES AU PLAN COMPTABLE
     # =========================
     if not df_dep.empty:
         df_dep = df_dep.merge(
@@ -106,7 +106,7 @@ def budget_vs_reel_ui(supabase, annee):
     st.dataframe(
         synthese.sort_values("groupe_compte").rename(columns={
             "groupe_compte": "Groupe",
-            "libelle_groupe": "Libellé",
+            "libelle_groupe": "Libellé groupe",
             "budget": "Budget (€)",
             "reel": "Réel (€)",
             "écart": "Écart (€)",
@@ -116,9 +116,9 @@ def budget_vs_reel_ui(supabase, annee):
     )
 
     # =========================
-    # TABLEAU 2 — DÉTAIL DU RÉEL
+    # TABLEAU 2 — DÉTAIL DU RÉEL (LIBELLÉ COMPTE)
     # =========================
-    st.subheader("📄 Détail du réel (dépenses)")
+    st.subheader("📄 Détail du réel par compte")
 
     if df_dep.empty:
         st.info("Aucune dépense pour cette année.")
@@ -127,7 +127,7 @@ def budget_vs_reel_ui(supabase, annee):
     detail = (
         df_dep
         .groupby(
-            ["groupe_compte", "libelle_groupe", "compte"],
+            ["groupe_compte", "compte", "libelle"],
             as_index=False
         )
         .agg(reel=("montant_ttc", "sum"))
@@ -137,8 +137,8 @@ def budget_vs_reel_ui(supabase, annee):
     st.dataframe(
         detail.rename(columns={
             "groupe_compte": "Groupe",
-            "libelle_groupe": "Libellé groupe",
             "compte": "Compte",
+            "libelle": "Libellé",
             "reel": "Réel (€)"
         }),
         use_container_width=True
