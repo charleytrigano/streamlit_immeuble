@@ -2,100 +2,141 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 
-# =========================
-# CONFIG SUPABASE
-# =========================
+# ======================================================
+# 🔐 SUPABASE
+# ======================================================
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+SUPABASE_KEY = st.secrets["SUPABASE_ANON_KEY"]
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# =========================
-# LOAD PLAN COMPTABLE
-# =========================
-@st.cache_data
+# ======================================================
+# 📥 LOAD
+# ======================================================
 def load_plan():
-    res = supabase.table("plan_comptable").select("*").order("groupe_compte, compte_8").execute()
-    return pd.DataFrame(res.data)
+    data = supabase.table("plan_comptable").select("*").execute().data
+    df = pd.DataFrame(data)
 
-# =========================
-# UI
-# =========================
-st.subheader("📘 Plan comptable")
+    if df.empty:
+        return df
 
-df_plan = load_plan()
+    # Nettoyage des lignes parasites
+    df = df[
+        (df["compte_8"].notna()) &
+        (df["compte_8"] != "") &
+        (df["libelle"].notna()) &
+        (df["libelle"] != "") &
+        (df["libelle_groupe"] != "000")
+    ]
 
-if df_plan.empty:
-    st.warning("Aucun compte enregistré")
-else:
-    st.dataframe(df_plan, use_container_width=True)
+    return df
 
-# =========================
-# 1️⃣ MODIFIER LIBELLÉ DE GROUPE
-# =========================
-st.markdown("## ✏️ Modifier un libellé de groupe")
 
-groupes = sorted(df_plan["groupe_compte"].unique())
+# ======================================================
+# 📚 UI
+# ======================================================
+def render():
+    st.title("📚 Plan comptable")
 
-groupe_sel = st.selectbox("Groupe de compte", groupes)
+    df = load_plan()
 
-libelle_actuel = (
-    df_plan[df_plan["groupe_compte"] == groupe_sel]["libelle_groupe"]
-    .iloc[0]
-)
+    # ==========================
+    # 📋 LISTE
+    # ==========================
+    st.subheader("Liste des comptes")
 
-new_libelle = st.text_input(
-    "Libellé du groupe",
-    value=libelle_actuel
-)
+    if df.empty:
+        st.info("Aucun compte")
+    else:
+        st.dataframe(
+            df.sort_values(["groupe_compte", "compte_8"]),
+            use_container_width=True
+        )
 
-if st.button("💾 Mettre à jour le libellé du groupe"):
-    supabase.table("plan_comptable") \
-        .update({"libelle_groupe": new_libelle}) \
-        .eq("groupe_compte", groupe_sel) \
-        .execute()
+    st.divider()
 
-    st.success(f"Groupe {groupe_sel} mis à jour")
-    st.cache_data.clear()
-    st.rerun()
+    # ==========================
+    # ➕ AJOUT
+    # ==========================
+    st.subheader("➕ Ajouter un compte")
 
-# =========================
-# 2️⃣ AJOUTER / MODIFIER UN COMPTE
-# =========================
-st.markdown("## ➕ Ajouter ou modifier un compte")
+    with st.form("add_plan"):
+        c1, c2 = st.columns(2)
 
-compte_8 = st.text_input("Compte (8 chiffres)", max_chars=8)
-libelle_compte = st.text_input("Libellé du compte")
-groupe_compte = st.text_input("Groupe (ex: 601)", max_chars=3)
-libelle_groupe = st.text_input("Libellé du groupe associé")
+        with c1:
+            compte_8 = st.text_input("Compte (8 chiffres)")
+            libelle = st.text_input("Libellé")
 
-if st.button("💾 Enregistrer le compte"):
-    supabase.table("plan_comptable").upsert({
-        "compte_8": compte_8,
-        "libelle": libelle_compte,
-        "groupe_compte": groupe_compte,
-        "libelle_groupe": libelle_groupe
-    }).execute()
+        with c2:
+            groupe_compte = st.text_input("Groupe de compte (ex : 615)")
+            libelle_groupe = st.text_input("Libellé groupe")
 
-    st.success("Compte enregistré")
-    st.cache_data.clear()
-    st.rerun()
+        if st.form_submit_button("Ajouter"):
+            supabase.table("plan_comptable").insert({
+                "compte_8": compte_8,
+                "libelle": libelle,
+                "groupe_compte": groupe_compte,
+                "libelle_groupe": libelle_groupe
+            }).execute()
 
-# =========================
-# 3️⃣ SUPPRIMER UN COMPTE
-# =========================
-st.markdown("## ❌ Supprimer un compte")
+            st.success("Compte ajouté")
+            st.rerun()
 
-compte_del = st.selectbox(
-    "Compte à supprimer",
-    df_plan["compte_8"].unique()
-)
+    st.divider()
 
-if st.button("🗑 Supprimer le compte"):
-    supabase.table("plan_comptable") \
-        .delete() \
-        .eq("compte_8", compte_del) \
-        .execute()
+    # ==========================
+    # ✏️ MODIFICATION
+    # ==========================
+    st.subheader("✏️ Modifier un compte")
 
-    st.success("Compte supprimé")
-    st.cache_data.clear()
-    st.rerun()
+    if not df.empty:
+        compte_sel = st.selectbox(
+            "Compte",
+            df["compte_8"].tolist()
+        )
+
+        row = df[df["compte_8"] == compte_sel].iloc[0]
+
+        with st.form("edit_plan"):
+            c1, c2 = st.columns(2)
+
+            with c1:
+                libelle_edit = st.text_input("Libellé", row["libelle"])
+            with c2:
+                libelle_groupe_edit = st.text_input(
+                    "Libellé groupe",
+                    row["libelle_groupe"]
+                )
+
+            if st.form_submit_button("Enregistrer"):
+                supabase.table("plan_comptable").update({
+                    "libelle": libelle_edit,
+                    "libelle_groupe": libelle_groupe_edit
+                }).eq("compte_8", compte_sel).execute()
+
+                st.success("Compte modifié")
+                st.rerun()
+
+    st.divider()
+
+    # ==========================
+    # 🗑 SUPPRESSION
+    # ==========================
+    st.subheader("🗑 Supprimer un compte")
+
+    if not df.empty:
+        compte_del = st.selectbox(
+            "Compte à supprimer",
+            df["compte_8"].tolist(),
+            key="delete_plan"
+        )
+
+        st.warning("⚠️ Suppression définitive")
+
+        if st.button("Supprimer"):
+            supabase.table("plan_comptable").delete().eq(
+                "compte_8", compte_del
+            ).execute()
+
+            st.success("Compte supprimé")
+            st.rerun()
