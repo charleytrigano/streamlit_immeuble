@@ -109,7 +109,7 @@ def depenses_ui(supabase):
 
             supabase.table("depenses").insert(
                 {
-                    "id": depense_id,
+                    "depense_id: depense_id,
                     "annee": annee,
                     "date": str(d_date),
                     "compte": compte,
@@ -134,7 +134,7 @@ def depenses_ui(supabase):
         else:
             dep_id = st.selectbox(
                 "Sélectionner une dépense",
-                df["id"],
+                df["depenseid"],
                 format_func=lambda x: (
                     f"{df[df['id']==x]['date'].iloc[0]} | "
                     f"{df[df['id']==x]['fournisseur'].iloc[0]} | "
@@ -142,7 +142,7 @@ def depenses_ui(supabase):
                 ),
             )
 
-            dep = df[df["id"] == dep_id].iloc[0]
+            dep = df[df["depense_id] == dep_id].iloc[0]
 
             type_value = (
                 dep["type"] if dep["type"] in TYPES else "Charge"
@@ -196,7 +196,7 @@ def depenses_ui(supabase):
                         "pdf_url": pdf_url,
                         "commentaire": commentaire,
                     }
-                ).eq("id", dep_id).execute()
+                ).eq("depense_id, dep_id).execute()
 
                 st.success("Dépense mise à jour")
                 st.rerun()
@@ -210,7 +210,7 @@ def depenses_ui(supabase):
         else:
             dep_id = st.selectbox(
                 "Sélectionner une dépense à supprimer",
-                df["id"],
+                df["depense_id],
                 format_func=lambda x: (
                     f"{df[df['id']==x]['date'].iloc[0]} | "
                     f"{df[df['id']==x]['fournisseur'].iloc[0]} | "
@@ -223,7 +223,7 @@ def depenses_ui(supabase):
                 supabase.storage.from_("factures").remove(
                     [f"{annee}/{dep_id}.pdf"]
                 )
-                supabase.table("depenses").delete().eq("id", dep_id).execute()
+                supabase.table("depenses").delete().eq("depense_id, dep_id).execute()
 
                 st.success("Dépense supprimée")
                 st.rerun()
