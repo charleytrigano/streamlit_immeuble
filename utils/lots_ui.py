@@ -4,6 +4,7 @@ import pandas as pd
 
 def lots_ui(supabase):
     st.header("🏢 Lots")
+    
 
     # =========================
     # Chargement des lots
