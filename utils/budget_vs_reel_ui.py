@@ -1,145 +1,203 @@
 import streamlit as st
 import pandas as pd
 
-# =========================
-# FORMAT €
-# =========================
+
 def euro(x):
     return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
-# =========================
-# UI
-# =========================
+
 def budget_vs_reel_ui(supabase, annee):
     st.header("📊 Budget vs Réel")
 
-    # =========================
+    # ======================================================
     # CHARGEMENT DES DONNÉES
-    # =========================
-    dep = supabase.table("depenses").select(
-        "annee, compte, montant_ttc"
-    ).eq("annee", annee).execute().data
+    # ======================================================
+    dep = (
+        supabase
+        .table("depenses")
+        .select("*")
+        .eq("annee", annee)
+        .execute()
+        .data
+    )
 
-    bud = supabase.table("budgets").select(
-        "annee, groupe_compte, libelle_groupe, budget"
-    ).eq("annee", annee).execute().data
+    bud = (
+        supabase
+        .table("budgets")
+        .select("*")
+        .eq("annee", annee)
+        .execute()
+        .data
+    )
 
-    plan = supabase.table("plan_comptable").select(
-        "compte_8, groupe_compte, libelle, libelle_groupe"
-    ).execute().data
+    plan = (
+        supabase
+        .table("plan_comptable")
+        .select("*")
+        .execute()
+        .data
+    )
 
     df_dep = pd.DataFrame(dep)
     df_bud = pd.DataFrame(bud)
     df_plan = pd.DataFrame(plan)
 
-    if df_dep.empty and df_bud.empty:
-        st.warning("Aucune donnée pour cette année.")
+    if df_dep.empty:
+        st.warning("Aucune dépense pour cette année.")
         return
 
-    # =========================
-    # RATTACHEMENT DES DÉPENSES AU PLAN COMPTABLE
-    # =========================
-    if not df_dep.empty:
-        df_dep = df_dep.merge(
-            df_plan,
-            left_on="compte",
-            right_on="compte_8",
-            how="left"
-        )
+    if df_bud.empty:
+        st.warning("Aucun budget pour cette année.")
+        return
 
-    # =========================
-    # AGRÉGATION DU RÉEL PAR GROUPE
-    # =========================
-    reel_groupe = (
+    # ======================================================
+    # NORMALISATION
+    # ======================================================
+    df_dep["montant_ttc"] = pd.to_numeric(df_dep["montant_ttc"], errors="coerce").fillna(0)
+    df_bud["budget"] = pd.to_numeric(df_bud["budget"], errors="coerce").fillna(0)
+
+    # ======================================================
+    # RATTACHEMENT PLAN COMPTABLE AUX DÉPENSES
+    # ======================================================
+    df_dep = df_dep.merge(
+        df_plan[["compte_8", "libelle", "groupe_compte"]],
+        left_on="compte",
+        right_on="compte_8",
+        how="left"
+    )
+
+    # ======================================================
+    # AGRÉGATION RÉEL PAR GROUPE DE COMPTES
+    # ======================================================
+    reel_par_groupe = (
         df_dep
-        .groupby(["groupe_compte", "libelle_groupe"], as_index=False)
+        .groupby("groupe_compte", dropna=False)
         .agg(reel=("montant_ttc", "sum"))
-        if not df_dep.empty
-        else pd.DataFrame(columns=["groupe_compte", "libelle_groupe", "reel"])
+        .reset_index()
     )
 
-    # =========================
-    # AGRÉGATION DU BUDGET PAR GROUPE
-    # =========================
-    budget_groupe = (
+    # ======================================================
+    # AGRÉGATION BUDGET PAR GROUPE
+    # ======================================================
+    budget_par_groupe = (
         df_bud
-        .groupby(["groupe_compte", "libelle_groupe"], as_index=False)
+        .groupby(["groupe_compte", "libelle_groupe"], dropna=False)
         .agg(budget=("budget", "sum"))
-        if not df_bud.empty
-        else pd.DataFrame(columns=["groupe_compte", "libelle_groupe", "budget"])
+        .reset_index()
     )
 
-    # =========================
-    # MERGE BUDGET VS RÉEL
-    # =========================
-    synthese = budget_groupe.merge(
-        reel_groupe,
-        on=["groupe_compte", "libelle_groupe"],
-        how="outer"
-    ).fillna(0)
+    # ======================================================
+    # TABLEAU BUDGET VS RÉEL
+    # ======================================================
+    df_bvr = budget_par_groupe.merge(
+        reel_par_groupe,
+        on="groupe_compte",
+        how="left"
+    )
 
-    synthese["écart"] = synthese["reel"] - synthese["budget"]
-    synthese["écart_%"] = synthese.apply(
-        lambda r: (r["écart"] / r["budget"] * 100) if r["budget"] != 0 else 0,
+    df_bvr["reel"] = df_bvr["reel"].fillna(0)
+    df_bvr["ecart"] = df_bvr["reel"] - df_bvr["budget"]
+    df_bvr["ecart_pct"] = df_bvr.apply(
+        lambda r: (r["ecart"] / r["budget"] * 100) if r["budget"] != 0 else 0,
         axis=1
     )
 
-    # =========================
-    # KPI
-    # =========================
+    # ======================================================
+    # KPI GLOBAUX
+    # ======================================================
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric("Budget total", euro(synthese["budget"].sum()))
-    col2.metric("Réel total", euro(synthese["reel"].sum()))
-    col3.metric("Écart", euro(synthese["écart"].sum()))
-    col4.metric(
-        "Écart %",
-        f"{(synthese['écart'].sum() / synthese['budget'].sum() * 100):.2f} %"
-        if synthese["budget"].sum() != 0 else "0 %"
-    )
+    total_budget = df_bvr["budget"].sum()
+    total_reel = df_bvr["reel"].sum()
+    total_ecart = total_reel - total_budget
+    pct_ecart = (total_ecart / total_budget * 100) if total_budget != 0 else 0
 
-    # =========================
-    # TABLEAU 1 — BUDGET VS RÉEL PAR GROUPE
-    # =========================
-    st.subheader("📘 Budget vs Réel par groupe de comptes")
+    col1.metric("💰 Budget total", euro(total_budget))
+    col2.metric("💸 Réel total", euro(total_reel))
+    col3.metric("📉 Écart", euro(total_ecart))
+    col4.metric("📊 Écart %", f"{pct_ecart:.2f} %")
+
+    # ======================================================
+    # TABLEAU SYNTHÈSE
+    # ======================================================
+    st.subheader("📋 Synthèse Budget vs Réel par groupe")
 
     st.dataframe(
-        synthese.sort_values("groupe_compte").rename(columns={
+        df_bvr[[
+            "groupe_compte",
+            "libelle_groupe",
+            "budget",
+            "reel",
+            "ecart",
+            "ecart_pct"
+        ]].rename(columns={
             "groupe_compte": "Groupe",
             "libelle_groupe": "Libellé groupe",
             "budget": "Budget (€)",
             "reel": "Réel (€)",
-            "écart": "Écart (€)",
-            "écart_%": "Écart (%)"
-        }),
+            "ecart": "Écart (€)",
+            "ecart_pct": "Écart (%)"
+        }).sort_values("groupe"),
         use_container_width=True
     )
 
-    # =========================
-    # TABLEAU 2 — DÉTAIL DU RÉEL (LIBELLÉ COMPTE)
-    # =========================
-    st.subheader("📄 Détail du réel par compte")
+    # ======================================================
+    # DÉTAIL DU RÉEL PAR POSTE
+    # ======================================================
+    st.subheader("🔍 Détail du réel par poste")
 
-    if df_dep.empty:
-        st.info("Aucune dépense pour cette année.")
-        return
-
-    detail = (
-        df_dep
-        .groupby(
-            ["groupe_compte", "compte", "libelle"],
-            as_index=False
-        )
-        .agg(reel=("montant_ttc", "sum"))
-        .sort_values(["groupe_compte", "compte"])
+    postes = (
+        df_dep["poste"]
+        .dropna()
+        .sort_values()
+        .unique()
+        .tolist()
     )
 
+    if not postes:
+        st.info("Aucun poste renseigné dans les dépenses.")
+        return
+
+    poste_sel = st.selectbox(
+        "Sélectionne un poste",
+        options=postes
+    )
+
+    df_poste = df_dep[df_dep["poste"] == poste_sel]
+
+    total_poste = df_poste["montant_ttc"].sum()
+
+    st.metric(
+        f"Total réel — {poste_sel}",
+        euro(total_poste)
+    )
+
+    # ======================================================
+    # TABLEAU DÉTAILLÉ DES DÉPENSES
+    # ======================================================
+    df_detail = df_poste[[
+        "date",
+        "fournisseur",
+        "poste",
+        "compte",
+        "libelle",
+        "montant_ttc",
+        "commentaire",
+        "facture_url"
+    ]].sort_values("date")
+
+    df_detail = df_detail.rename(columns={
+        "date": "Date",
+        "fournisseur": "Fournisseur",
+        "poste": "Poste",
+        "compte": "Compte",
+        "libelle": "Libellé du compte",
+        "montant_ttc": "Montant TTC (€)",
+        "commentaire": "Commentaire",
+        "facture_url": "Facture"
+    })
+
     st.dataframe(
-        detail.rename(columns={
-            "groupe_compte": "Groupe",
-            "compte": "Compte",
-            "libelle": "Libellé",
-            "reel": "Réel (€)"
-        }),
+        df_detail,
         use_container_width=True
     )
