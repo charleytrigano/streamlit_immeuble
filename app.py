@@ -18,55 +18,28 @@ def load_table(name):
 def euro(x):
     return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
-# ---------------- MAIN ----------------
-def main():
-    st.title("📊 Pilotage des charges – Budget vs Réel")
+# ---------------- SIDEBAR ----------------
+st.sidebar.title("Filtres")
 
-    # ---------- LOAD DATA ----------
-    df_dep = load_table("depenses")
-    df_bud = load_table("budgets")
+df_dep = load_table("depenses")
+annees = sorted(df_dep["annee"].dropna().unique(), reverse=True)
+annee = st.sidebar.selectbox("Année", annees)
 
-    if df_dep.empty:
-        st.warning("Aucune dépense enregistrée")
-        return
+# ---------------- TABS ----------------
+tab_dep, tab_bud, tab_plan = st.tabs(
+    ["📋 Dépenses", "📊 Budgets", "📚 Plan comptable"]
+)
 
-    # ---------- FILTRES ----------
-    annee = st.selectbox(
-        "Année",
-        sorted(df_dep["annee"].dropna().unique(), reverse=True)
-    )
+# ==========================================================
+# 📋 DEPENSES
+# ==========================================================
+with tab_dep:
+    st.subheader("Dépenses")
 
-    dep_y = df_dep[df_dep["annee"] == annee].copy()
-    bud_y = df_bud[df_bud["annee"] == annee].copy() if not df_bud.empty else pd.DataFrame()
+    df_dep_y = df_dep[df_dep["annee"] == annee].copy()
+    df_dep_y["montant_ttc"] = pd.to_numeric(df_dep_y["montant_ttc"], errors="coerce").fillna(0)
 
-    # ---------- NORMALISATION ----------
-    dep_y["montant_ttc"] = pd.to_numeric(dep_y["montant_ttc"], errors="coerce").fillna(0)
-
-    # sens comptable sécurisé
-    sens_valides = ["Charge", "Avoir", "Remboursement"]
-    dep_y["sens"] = dep_y["sens"].where(dep_y["sens"].isin(sens_valides), "Charge")
-
-    # ---------- KPI ----------
-    total_charges = dep_y[dep_y["sens"] == "Charge"]["montant_ttc"].sum()
-    total_avoirs = dep_y[dep_y["sens"] == "Avoir"]["montant_ttc"].sum()
-    total_remb = dep_y[dep_y["sens"] == "Remboursement"]["montant_ttc"].sum()
-
-    net_reel = total_charges - total_avoirs - total_remb
-    budget_total = bud_y["budget"].sum() if not bud_y.empty else 0
-    ecart = net_reel - budget_total
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Charges réelles", euro(net_reel))
-    c2.metric("Budget", euro(budget_total))
-    c3.metric("Écart", euro(ecart), delta_color="inverse")
-    c4.metric("Avoirs", euro(total_avoirs))
-
-    st.divider()
-
-    # ---------- DEPENSES ----------
-    st.subheader("📋 Dépenses")
-
-    dep_display_cols = [
+    display_cols = [
         "depense_id",
         "date",
         "compte",
@@ -78,63 +51,32 @@ def main():
         "commentaire"
     ]
 
-    dep_disp = dep_y[[c for c in dep_display_cols if c in dep_y.columns]].sort_values("date")
-
     st.dataframe(
-        dep_disp,
-        use_container_width=True,
-        column_config={
-            "montant_ttc": st.column_config.NumberColumn("Montant TTC", format="%.2f €")
-        }
+        df_dep_y[display_cols].sort_values("date"),
+        use_container_width=True
     )
 
-    st.divider()
-
-    # ---------- BUDGET PAR GROUPE ----------
-    st.subheader("📊 Budget par groupe")
-
-    if bud_y.empty:
-        st.info("Aucun budget pour cette année")
-    else:
-        bud_grp = (
-            bud_y
-            .groupby(["groupe_compte", "libelle_groupe"], as_index=False)["budget"]
-            .sum()
-            .sort_values("groupe_compte")
-        )
-
-        st.dataframe(
-            bud_grp,
-            use_container_width=True,
-            column_config={
-                "budget": st.column_config.NumberColumn("Budget", format="%.2f €")
-            }
-        )
-
-    # ---------- AJOUT DEPENSE ----------
-    st.divider()
-    st.subheader("➕ Ajouter une dépense")
+    # ---------- AJOUT ----------
+    st.markdown("### ➕ Ajouter une dépense")
 
     with st.form("add_depense"):
-        col1, col2, col3 = st.columns(3)
+        c1, c2, c3 = st.columns(3)
 
-        with col1:
+        with c1:
             date = st.date_input("Date")
             compte = st.text_input("Compte")
             poste = st.text_input("Poste")
 
-        with col2:
+        with c2:
             fournisseur = st.text_input("Fournisseur")
-            type_libre = st.text_input("Type (libre)")
-            sens = st.selectbox("Sens comptable", sens_valides)
+            type_libre = st.text_input("Type")
+            sens = st.selectbox("Sens", ["Charge", "Avoir", "Remboursement"])
 
-        with col3:
+        with c3:
             montant = st.number_input("Montant TTC", min_value=0.0, step=0.01)
             commentaire = st.text_input("Commentaire")
 
-        submit = st.form_submit_button("Enregistrer")
-
-        if submit:
+        if st.form_submit_button("Enregistrer"):
             supabase.table("depenses").insert({
                 "annee": annee,
                 "date": str(date),
@@ -146,10 +88,84 @@ def main():
                 "montant_ttc": montant,
                 "commentaire": commentaire
             }).execute()
-
             st.success("Dépense ajoutée")
             st.rerun()
 
-# ---------------- RUN ----------------
-if __name__ == "__main__":
-    main()
+    # ---------- SUPPRESSION ----------
+    st.markdown("### 🗑 Supprimer une dépense")
+    dep_id = st.selectbox(
+        "Sélectionner une dépense",
+        df_dep_y["depense_id"].tolist()
+    )
+
+    if st.button("Supprimer la dépense"):
+        supabase.table("depenses").delete().eq("depense_id", dep_id).execute()
+        st.success("Dépense supprimée")
+        st.rerun()
+
+# ==========================================================
+# 📊 BUDGETS
+# ==========================================================
+with tab_bud:
+    st.subheader("Budgets")
+
+    df_bud = load_table("budgets")
+    df_bud_y = df_bud[df_bud["annee"] == annee].copy()
+
+    st.dataframe(
+        df_bud_y[["id", "groupe_compte", "libelle_groupe", "budget"]]
+        .sort_values("groupe_compte"),
+        use_container_width=True
+    )
+
+    # ---------- AJOUT / MODIF ----------
+    st.markdown("### ➕ Ajouter / modifier un budget")
+
+    with st.form("add_budget"):
+        g = st.text_input("Groupe de compte (ex: 601)")
+        lg = st.text_input("Libellé groupe")
+        b = st.number_input("Budget", min_value=0.0, step=100.0)
+
+        if st.form_submit_button("Enregistrer"):
+            supabase.table("budgets").insert({
+                "annee": annee,
+                "groupe_compte": g,
+                "libelle_groupe": lg,
+                "budget": b
+            }).execute()
+            st.success("Budget enregistré")
+            st.rerun()
+
+    # ---------- SUPPRESSION ----------
+    st.markdown("### 🗑 Supprimer un budget")
+    bud_id = st.selectbox(
+        "Sélectionner un budget",
+        df_bud_y["id"].tolist()
+    )
+
+    if st.button("Supprimer le budget"):
+        supabase.table("budgets").delete().eq("id", bud_id).execute()
+        st.success("Budget supprimé")
+        st.rerun()
+
+# ==========================================================
+# 📚 PLAN COMPTABLE
+# ==========================================================
+with tab_plan:
+    st.subheader("Plan comptable")
+
+    df_plan = load_table("plan_comptable")
+
+    # nettoyage visuel
+    df_plan = df_plan[
+        (df_plan["compte_8"].notna()) &
+        (df_plan["compte_8"] != "") &
+        (df_plan["libelle_groupe"] != "000")
+    ]
+
+    st.dataframe(
+        df_plan.sort_values(["groupe_compte", "compte_8"]),
+        use_container_width=True
+    )
+
+    st.info("Plan comptable verrouillé – modification via base uniquement")
