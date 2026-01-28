@@ -41,6 +41,45 @@ def budget_ui(supabase, annee):
         df_plan = df_plan.drop_duplicates("groupe_compte")
 
     # ======================================================
+    # KPI
+    # ======================================================
+    if not df_bud.empty:
+        total_budget = df_bud["budget"].fillna(0).sum()
+    else:
+        total_budget = 0
+
+    st.metric("💰 Budget total", euro(total_budget))
+
+    # ======================================================
+    # TABLEAU DES LIGNES DE BUDGET
+    # ======================================================
+    st.subheader(f"📄 Lignes de budget — {annee}")
+
+    if df_bud.empty:
+        st.info("Aucune ligne de budget pour cette année.")
+    else:
+        df_display = (
+            df_bud[[
+                "groupe_compte",
+                "libelle_groupe",
+                "budget"
+            ]]
+            .sort_values("groupe_compte")
+            .rename(columns={
+                "groupe_compte": "Groupe de compte",
+                "libelle_groupe": "Libellé groupe",
+                "budget": "Budget (€)"
+            })
+        )
+
+        st.dataframe(
+            df_display,
+            use_container_width=True
+        )
+
+    st.divider()
+
+    # ======================================================
     # AJOUT BUDGET
     # ======================================================
     st.subheader("➕ Ajouter un budget")
@@ -76,23 +115,14 @@ def budget_ui(supabase, annee):
             st.success("Budget ajouté")
             st.rerun()
 
-    # ======================================================
-    # TABLEAU BUDGET
-    # ======================================================
-    st.subheader(f"📊 Budget {annee}")
-
-    if df_bud.empty:
-        st.info("Aucun budget enregistré pour cette année.")
-        return
-
-    df_bud = df_bud.sort_values("groupe_compte")
-
-    total_budget = df_bud["budget"].fillna(0).sum()
-    st.metric("💰 Budget total", euro(total_budget))
+    st.divider()
 
     # ======================================================
     # MODIFICATION / SUPPRESSION
     # ======================================================
+    if df_bud.empty:
+        return
+
     st.subheader("✏️ Modifier / 🗑️ Supprimer un budget")
 
     df_bud["label"] = (
@@ -102,7 +132,7 @@ def budget_ui(supabase, annee):
     )
 
     choix = st.selectbox(
-        "Sélectionner un budget",
+        "Sélectionner une ligne de budget",
         options=df_bud["label"].tolist()
     )
 
@@ -117,17 +147,8 @@ def budget_ui(supabase, annee):
         value=float(row["budget"])
     )
 
-    col2.text_input(
-        "Groupe",
-        row["groupe_compte"],
-        disabled=True
-    )
-
-    col3.text_input(
-        "Libellé",
-        row["libelle_groupe"],
-        disabled=True
-    )
+    col2.text_input("Groupe", row["groupe_compte"], disabled=True)
+    col3.text_input("Libellé", row["libelle_groupe"], disabled=True)
 
     col_save, col_del = st.columns(2)
 
