@@ -107,7 +107,7 @@ def lots_ui(supabase):
             }).eq("lot", lot_sel).execute()
 
             st.success(f"Lot {lot_sel} mis à jour.")
-            st.experimental_rerun()
+            st.rerun()
 
         except Exception as e:
             st.error(f"Erreur mise à jour : {e}")
