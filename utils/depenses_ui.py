@@ -6,150 +6,171 @@ def depenses_ui(supabase):
     st.title("📄 État des dépenses")
 
     # =========================
-    # Chargement données DEPENSES
+    # CHARGEMENT DES DONNÉES
     # =========================
-    dep = supabase.table("v_depenses_enrichies").select("*").execute().data
-    if not dep:
-        st.warning("Aucune dépense disponible.")
+    dep = supabase.table("depenses").select("*").execute()
+    bud = supabase.table("budgets").select("*").execute()
+    plan = supabase.table("plan_comptable").select("*").execute()
+
+    if not dep.data:
+        st.warning("Aucune dépense enregistrée.")
         return
 
-    df = pd.DataFrame(dep)
-    df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce").fillna(0)
-    df["annee"] = pd.to_numeric(df["annee"], errors="coerce").astype("Int64")
+    df_dep = pd.DataFrame(dep.data)
+    df_bud = pd.DataFrame(bud.data) if bud.data else pd.DataFrame()
+    df_plan = pd.DataFrame(plan.data)
 
     # =========================
-    # Chargement données BUDGETS
+    # ENRICHISSEMENT
     # =========================
-    try:
-        bud = supabase.table("budgets").select("*").execute().data
-        df_bud = pd.DataFrame(bud) if bud else pd.DataFrame()
-    except Exception:
-        df_bud = pd.DataFrame()
+    df_dep["date"] = pd.to_datetime(df_dep["date"], errors="coerce")
+    df_dep["annee"] = df_dep["date"].dt.year
 
-    if not df_bud.empty:
-        df_bud["annee"] = pd.to_numeric(df_bud["annee"], errors="coerce").astype("Int64")
-        df_bud["budget"] = pd.to_numeric(df_bud["budget"], errors="coerce").fillna(0)
-        # sécurité texte
-        df_bud["groupe_compte"] = df_bud["groupe_compte"].astype(str)
+    df_dep = df_dep.merge(
+        df_plan[["compte_8", "groupe_compte", "libelle_groupe"]],
+        left_on="compte",
+        right_on="compte_8",
+        how="left"
+    )
+
     # =========================
-    # Sidebar – filtres
+    # SIDEBAR – FILTRES
     # =========================
     st.sidebar.header("🎛️ Filtres")
 
-    annees = sorted(df["annee"].dropna().unique())
-    annee_sel = st.sidebar.multiselect("Année", annees, default=annees)
+    annee_sel = st.sidebar.multiselect(
+        "Année",
+        sorted(df_dep["annee"].dropna().unique()),
+        default=sorted(df_dep["annee"].dropna().unique())
+    )
 
-    groupes = sorted(df["groupe_compte"].dropna().unique())
-    groupe_sel = st.sidebar.multiselect("Groupe de compte", groupes, default=[])
+    groupe_sel = st.sidebar.multiselect(
+        "Groupe de compte",
+        sorted(df_dep["groupe_compte"].dropna().astype(str).unique())
+    )
 
-    comptes = sorted(df["compte"].dropna().unique())
-    compte_sel = st.sidebar.multiselect("Compte", comptes, default=[])
+    compte_sel = st.sidebar.multiselect(
+        "Compte",
+        sorted(df_dep["compte"].dropna().unique())
+    )
 
-    fournisseurs = sorted(df["fournisseur"].dropna().unique())
-    fournisseur_sel = st.sidebar.multiselect("Fournisseur", fournisseurs, default=[])
+    fournisseur_sel = st.sidebar.multiselect(
+        "Fournisseur",
+        sorted(df_dep["fournisseur"].dropna().unique())
+    )
 
-    postes = sorted(df["poste"].dropna().unique())
-    poste_sel = st.sidebar.multiselect("Poste", postes, default=[])
+    poste_sel = st.sidebar.multiselect(
+        "Poste",
+        sorted(df_dep["poste"].dropna().unique())
+    )
 
-    lots = sorted(df["lot_id"].dropna().unique())
-    lot_sel = st.sidebar.multiselect("Lot", lots, default=[])
+    type_sel = st.sidebar.multiselect(
+        "Type",
+        sorted(df_dep["type"].dropna().unique())
+    )
 
     # =========================
-    # Application filtres (LOGIQUE HIÉRARCHIQUE)
+    # APPLICATION DES FILTRES
     # =========================
-    df_f = df.copy()
+    df_f = df_dep.copy()
 
     if annee_sel:
         df_f = df_f[df_f["annee"].isin(annee_sel)]
 
-    # 🔑 PRIORITÉ AU COMPTE : si des comptes sont choisis,
-    # on ignore le filtre groupe_compte.
+    if groupe_sel:
+        df_f = df_f[df_f["groupe_compte"].astype(str).isin(groupe_sel)]
+
     if compte_sel:
         df_f = df_f[df_f["compte"].isin(compte_sel)]
-    elif groupe_sel:
-        df_f = df_f[df_f["groupe_compte"].isin(groupe_sel)]
-
-    if poste_sel:
-        df_f = df_f[df_f["poste"].isin(poste_sel)]
 
     if fournisseur_sel:
         df_f = df_f[df_f["fournisseur"].isin(fournisseur_sel)]
 
-    if lot_sel:
-        df_f = df_f[df_f["lot_id"].isin(lot_sel)]
+    if poste_sel:
+        df_f = df_f[df_f["poste"].isin(poste_sel)]
+
+    if type_sel:
+        df_f = df_f[df_f["type"].isin(type_sel)]
 
     # =========================
-    # Sécurité UX
-    # =========================
-    if df_f.empty:
-        st.warning("Aucune dépense pour les filtres choisis.")
-        return
-
-    # =========================
-    # KPI – Réalisé, Budget, Écarts
+    # KPI – DÉPENSES
     # =========================
     total_dep = df_f["montant_ttc"].sum()
-    nb = len(df_f)
-    moyenne = total_dep / nb if nb else 0
+    nb_lignes = len(df_f)
+    dep_moy = total_dep / nb_lignes if nb_lignes > 0 else 0
 
-    # ---- Calcul du budget pour le même périmètre ----
+    # =========================
+    # KPI – BUDGET (LOGIQUE CORRECTE)
+    # =========================
     budget_total = 0.0
     ecart_montant = 0.0
     ecart_pct = 0.0
 
     if not df_bud.empty:
-        # on prend seulement les années visibles
-        df_bud_f = df_bud.copy()
+        df_bf = df_bud.copy()
+
         if annee_sel:
-            df_bud_f = df_bud_f[df_bud_f["annee"].isin(annee_sel)]
+            df_bf = df_bf[df_bf["annee"].isin(annee_sel)]
 
-        # on se cale sur les groupes réellement présents dans les dépenses filtrées
-        groupes_dep = df_f["groupe_compte"].dropna().astype(str).unique()
-        if len(groupes_dep) > 0:
-            df_bud_f = df_bud_f[df_bud_f["groupe_compte"].isin(groupes_dep)]
+        # PRIORITÉ AU COMPTE
+        if compte_sel and "compte" in df_bf.columns:
+            df_bf = df_bf[df_bf["compte"].isin(compte_sel)]
 
-        budget_total = df_bud_f["budget"].sum()
+        # SINON GROUPE
+        elif groupe_sel:
+            df_bf["groupe_compte"] = df_bf["groupe_compte"].astype(str)
+            df_bf = df_bf[df_bf["groupe_compte"].isin(groupe_sel)]
+
+        # SINON GROUPES PRÉSENTS DANS LES DÉPENSES
+        else:
+            groupes_dep = (
+                df_f["groupe_compte"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+            df_bf["groupe_compte"] = df_bf["groupe_compte"].astype(str)
+            df_bf = df_bf[df_bf["groupe_compte"].isin(groupes_dep)]
+
+        budget_total = df_bf["budget"].sum()
 
         if budget_total > 0:
             ecart_montant = budget_total - total_dep
             ecart_pct = (ecart_montant / budget_total) * 100
-        else:
-            ecart_montant = 0.0
-            ecart_pct = 0.0
 
     # =========================
-    # Affichage KPI
+    # AFFICHAGE KPI
     # =========================
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("💸 Total dépenses", f"{total_dep:,.2f} €")
-    c2.metric("📊 Budget total", f"{budget_total:,.2f} €")
-    c3.metric("🔀 Écart (Budget - Réel)", f"{ecart_montant:,.2f} €")
-    c4.metric("📈 Écart / Budget", f"{ecart_pct:,.2f} %")
+    c1, c2, c3, c4, c5 = st.columns(5)
 
-    c5, c6 = st.columns(2)
-    c5.metric("📄 Nombre de lignes", nb)
-    c6.metric("💶 Dépense moyenne", f"{moyenne:,.2f} €")
-
-    st.divider()
+    c1.metric("💰 Dépenses", f"{total_dep:,.2f} €")
+    c2.metric("📊 Budget", f"{budget_total:,.2f} €")
+    c3.metric("📉 Écart (€)", f"{ecart_montant:,.2f} €")
+    c4.metric("📐 Écart (%)", f"{ecart_pct:,.1f} %")
+    c5.metric("🧾 Nb lignes", nb_lignes)
 
     # =========================
-    # Tableau des dépenses
+    # TABLEAU
     # =========================
-    colonnes = [
-        "date",
-        "annee",
-        "groupe_compte",
-        "libelle_groupe",
-        "compte",
-        "poste",
-        "fournisseur",
-        "lot_id",
-        "montant_ttc",
-        "commentaire",
-    ]
-    colonnes = [c for c in colonnes if c in df_f.columns]
+    if df_f.empty:
+        st.warning("Aucune dépense pour les filtres choisis.")
+        return
 
     st.dataframe(
-        df_f[colonnes].sort_values("date", ascending=False),
-        use_container_width=True,
+        df_f[
+            [
+                "date",
+                "annee",
+                "groupe_compte",
+                "libelle_groupe",
+                "compte",
+                "poste",
+                "fournisseur",
+                "montant_ttc",
+                "type",
+                "commentaire",
+            ]
+        ].sort_values("date"),
+        use_container_width=True
     )
