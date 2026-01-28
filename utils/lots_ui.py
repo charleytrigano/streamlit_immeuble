@@ -3,23 +3,22 @@ import pandas as pd
 
 
 def lots_ui(supabase):
-    st.title("🏢 Lots")
-    st.caption("Gestion des lots – modification du propriétaire et du locataire uniquement")
+    st.header("🏢 Lots")
 
     # =========================
-    # Chargement des données
+    # Chargement des lots
     # =========================
     try:
         res = (
             supabase
             .table("lots")
-            .select("lot, tantiemes, proprietaire, locataire")
+            .select(
+                "lot, tantiemes, etage, usage, description, proprietaire, locataire"
+            )
             .order("lot")
             .execute()
         )
-        data = res.data or []
-        df = pd.DataFrame(data)
-
+        df = pd.DataFrame(res.data or [])
     except Exception as e:
         st.error(f"Erreur chargement lots : {e}")
         return
@@ -29,7 +28,7 @@ def lots_ui(supabase):
         return
 
     # =========================
-    # Affichage tableau
+    # Tableau des lots
     # =========================
     st.subheader("📋 Liste des lots")
 
@@ -46,56 +45,80 @@ def lots_ui(supabase):
     # =========================
     st.subheader("✏️ Modifier un lot")
 
-    lot_selectionne = st.selectbox(
+    lot_sel = st.selectbox(
         "Lot",
         df["lot"].tolist()
     )
 
-    lot_row = df[df["lot"] == lot_selectionne].iloc[0]
+    row = df[df["lot"] == lot_sel].iloc[0]
 
     # =========================
-    # Formulaire modification
+    # Formulaire édition
     # =========================
-    with st.form("form_edit_lot"):
-        col1, col2 = st.columns(2)
+    with st.form("edit_lot_form"):
+        c1, c2, c3 = st.columns(3)
 
-        with col1:
+        with c1:
+            tantiemes = st.number_input(
+                "Tantièmes",
+                value=0 if pd.isna(row["tantiemes"]) else float(row["tantiemes"]),
+                step=1.0
+            )
+            etage = st.text_input(
+                "Étage",
+                value="" if pd.isna(row["etage"]) else row["etage"]
+            )
+
+        with c2:
+            usage = st.text_input(
+                "Usage",
+                value="" if pd.isna(row["usage"]) else row["usage"]
+            )
             proprietaire = st.text_input(
                 "Propriétaire",
-                value="" if pd.isna(lot_row["proprietaire"]) else lot_row["proprietaire"]
+                value="" if pd.isna(row["proprietaire"]) else row["proprietaire"]
             )
 
-        with col2:
+        with c3:
             locataire = st.text_input(
                 "Locataire",
-                value="" if pd.isna(lot_row["locataire"]) else lot_row["locataire"]
+                value="" if pd.isna(row["locataire"]) else row["locataire"]
             )
 
-        submitted = st.form_submit_button("💾 Enregistrer")
+        description = st.text_area(
+            "Description",
+            value="" if pd.isna(row["description"]) else row["description"]
+        )
+
+        submit = st.form_submit_button("💾 Enregistrer")
 
     # =========================
     # Sauvegarde
     # =========================
-    if submitted:
+    if submit:
         try:
             supabase.table("lots").update({
-                "proprietaire": proprietaire if proprietaire.strip() != "" else None,
-                "locataire": locataire if locataire.strip() != "" else None
-            }).eq("lot", lot_selectionne).execute()
+                "tantiemes": tantiemes,
+                "etage": etage or None,
+                "usage": usage or None,
+                "description": description or None,
+                "proprietaire": proprietaire or None,
+                "locataire": locataire or None,
+            }).eq("lot", lot_sel).execute()
 
-            st.success(f"Lot {lot_selectionne} mis à jour avec succès.")
+            st.success(f"Lot {lot_sel} mis à jour.")
             st.experimental_rerun()
 
         except Exception as e:
-            st.error(f"Erreur lors de la mise à jour : {e}")
+            st.error(f"Erreur mise à jour : {e}")
 
     # =========================
     # Règles métier visibles
     # =========================
     st.divider()
     st.info(
-        "🔒 Règles :\n"
-        "- Les lots ne peuvent pas être supprimés\n"
-        "- Les colonnes *Propriétaire* et *Locataire* sont modifiables\n"
+        "🔒 Règles de gestion :\n"
+        "- Les lots ne peuvent pas être ajoutés ni supprimés\n"
+        "- Toutes les informations sont modifiables\n"
         "- Les champs peuvent être laissés vides"
     )
