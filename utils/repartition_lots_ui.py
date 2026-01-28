@@ -1,6 +1,7 @@
-
 import streamlit as st
 import pandas as pd
+
+BASE_TANTIEMES = 10_000
 
 
 def euro(x):
@@ -13,131 +14,78 @@ def repartition_lots_ui(supabase, annee):
     # ======================================================
     # CHARGEMENT DES DONNÉES
     # ======================================================
-    df_dep = pd.DataFrame(
-        supabase
-        .table("depenses")
-        .select("*")
-        .eq("annee", annee)
-        .execute()
-        .data
-    )
+    dep = supabase.table("depenses").select("*").eq("annee", annee).execute().data
+    rep = supabase.table("repartition_depenses").select("*").execute().data
+    lots = supabase.table("lots").select("*").execute().data
 
-    df_lots = pd.DataFrame(
-        supabase
-        .table("lots")
-        .select("*")
-        .execute()
-        .data
-    )
-
-    if df_dep.empty or df_lots.empty:
-        st.warning("Données insuffisantes pour la répartition.")
+    if not dep or not rep or not lots:
+        st.warning("Données insuffisantes pour calculer la répartition.")
         return
 
-    df_dep["montant_ttc"] = pd.to_numeric(df_dep["montant_ttc"], errors="coerce").fillna(0)
-    df_lots["tantiemes"] = pd.to_numeric(df_lots["tantiemes"], errors="coerce").fillna(0)
-
-    total_tantiemes = df_lots["tantiemes"].sum()
-
-    # ======================================================
-    # 1️⃣ CHARGES DIRECTES PAR LOT
-    # ======================================================
-    df_direct = df_dep[df_dep["lot_id"].notna()].copy()
-
-    df_direct = df_direct.merge(
-        df_lots[["id", "lot"]],
-        left_on="lot_id",
-        right_on="id",
-        how="left"
-    )
-
-    df_direct["charge_lot"] = df_direct["montant_ttc"]
+    df_dep = pd.DataFrame(dep)
+    df_rep = pd.DataFrame(rep)
+    df_lots = pd.DataFrame(lots)
 
     # ======================================================
-    # 2️⃣ CHARGES À RÉPARTIR (TANTIÈMES)
+    # NORMALISATION DES CLÉS
     # ======================================================
-    df_rep = df_dep[
-        df_dep["lot_id"].isna() &
-        (df_dep["repartition_requise"] == True)
-    ].copy()
+    if "lot_id" not in df_lots.columns:
+        st.error("❌ Colonne `lot_id` absente de la table lots")
+        return
 
-    if not df_rep.empty and total_tantiemes > 0:
-        df_rep["key"] = 1
-        df_lots["key"] = 1
+    if "lot_id" not in df_rep.columns:
+        st.error("❌ Colonne `lot_id` absente de la table repartition_depenses")
+        return
 
-        df_rep = df_rep.merge(df_lots, on="key")
+    if "depense_id" not in df_rep.columns:
+        st.error("❌ Colonne `depense_id` absente de la table repartition_depenses")
+        return
 
-        df_rep["charge_lot"] = (
-            df_rep["montant_ttc"] * df_rep["tantiemes"] / total_tantiemes
-        )
-
-        df_rep = df_rep.rename(columns={"lot": "lot"})
-    else:
-        df_rep = pd.DataFrame(columns=["lot", "charge_lot"])
+    if "depense_id" not in df_dep.columns:
+        st.error("❌ Colonne `depense_id` absente de la table depenses")
+        return
 
     # ======================================================
-    # CONSOLIDATION
+    # MERGE GLOBAL
     # ======================================================
-    df_all = pd.concat([
-        df_direct[["lot", "charge_lot"]],
-        df_rep[["lot", "charge_lot"]]
-    ])
-
-    # ======================================================
-    # TOTAL PAR LOT
-    # ======================================================
-    synthese = (
-        df_all
-        .groupby("lot", as_index=False)
-        .agg(charges_reelles=("charge_lot", "sum"))
-        .sort_values("lot")
+    df = (
+        df_rep
+        .merge(df_dep, on="depense_id", how="left")
+        .merge(df_lots, on="lot_id", how="left")
     )
 
     # ======================================================
-    # KPI
+    # CALCUL DES CHARGES
     # ======================================================
-    col1, col2 = st.columns(2)
-
-    col1.metric(
-        "💸 Total charges réparties",
-        euro(synthese["charges_reelles"].sum())
-    )
-
-    col2.metric(
-        "🏢 Nombre de lots",
-        synthese["lot"].nunique()
+    df["charges_reelles"] = (
+        df["montant_ttc"] * df["quote_part"] / BASE_TANTIEMES
     )
 
     # ======================================================
-    # TABLEAU SYNTHÈSE
+    # AGRÉGATION PAR LOT
     # ======================================================
-    st.subheader("📋 Charges réelles par lot")
+    group_cols = ["lot_id"]
 
+    # Ajout dynamique des colonnes descriptives si présentes
+    for col in ["numero_lot", "etage", "usage", "proprietaire", "locataire"]:
+        if col in df.columns:
+            group_cols.append(col)
+
+    result = (
+        df
+        .groupby(group_cols, as_index=False)
+        .agg(charges_reelles=("charges_reelles", "sum"))
+        .sort_values("charges_reelles", ascending=False)
+    )
+
+    # ======================================================
+    # AFFICHAGE
+    # ======================================================
     st.dataframe(
-        synthese.rename(columns={
-            "lot": "Lot",
+        result.rename(columns={
             "charges_reelles": "Charges réelles (€)"
         }),
         use_container_width=True
     )
 
-    # ======================================================
-    # DÉTAIL PAR LOT
-    # ======================================================
-    st.subheader("🔍 Détail par lot")
-
-    lot_sel = st.selectbox("Lot", sorted(synthese["lot"].unique()))
-
-    detail = df_all[df_all["lot"] == lot_sel]
-
-    st.metric(
-        f"Total charges – Lot {lot_sel}",
-        euro(detail["charge_lot"].sum())
-    )
-
-    st.dataframe(
-        detail.rename(columns={
-            "charge_lot": "Montant (€)"
-        }),
-        use_container_width=True
-    )
+    st.caption("Répartition calculée sur la base des tantièmes (10 000)")
