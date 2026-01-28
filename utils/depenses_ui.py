@@ -5,75 +5,90 @@ import pandas as pd
 def depenses_ui(supabase):
     st.header("📄 État des dépenses")
 
-    # ======================
-    # Chargement des données
-    # ======================
+    # =========================
+    # Chargement données
+    # =========================
     res = (
-        supabase.table("depenses")
-        .select("*")
+        supabase
+        .table("depenses")
+        .select(
+            "depense_id, annee, date, compte, poste, fournisseur, montant_ttc, type, commentaire"
+        )
         .execute()
     )
 
     df = pd.DataFrame(res.data or [])
 
     if df.empty:
-        st.warning("Aucune dépense")
+        st.warning("Aucune dépense enregistrée")
         return
 
-    # ======================
-    # Filtres (SIDEBAR)
-    # ======================
-    st.sidebar.subheader("Filtres dépenses")
+    # Sécurités
+    df["annee"] = df["annee"].astype(int)
+    df["montant_ttc"] = df["montant_ttc"].astype(float)
 
+    # =========================
+    # SIDEBAR — FILTRES
+    # =========================
+    st.sidebar.subheader("🔎 Filtres dépenses")
+
+    # Année
     annee = st.sidebar.selectbox(
         "Année",
-        sorted(df["annee"].dropna().unique())
+        sorted(df["annee"].unique())
     )
 
-    type_dep = st.sidebar.multiselect(
-        "Type",
-        sorted(df["type"].dropna().unique())
-    )
+    # Compte
+    comptes = sorted(df["compte"].dropna().unique())
+    compte_filtre = st.sidebar.multiselect("Compte", comptes)
 
-    df = df[df["annee"] == annee]
+    # Poste
+    postes = sorted(df["poste"].dropna().unique())
+    poste_filtre = st.sidebar.multiselect("Poste", postes)
 
-    if type_dep:
-        df = df[df["type"].isin(type_dep)]
+    # Fournisseur
+    fournisseurs = sorted(df["fournisseur"].dropna().unique())
+    fournisseur_filtre = st.sidebar.multiselect("Fournisseur", fournisseurs)
 
-    # ======================
-    # Budget (par année)
-    # ======================
-    bud = (
-        supabase.table("budgets")
-        .select("budget")
-        .eq("annee", annee)
-        .execute()
-    )
+    # Type
+    types = sorted(df["type"].dropna().unique())
+    type_filtre = st.sidebar.multiselect("Type", types)
 
-    df_bud = pd.DataFrame(bud.data or [])
-    budget_total = df_bud["budget"].sum() if not df_bud.empty else 0
+    # =========================
+    # Application filtres
+    # =========================
+    df_f = df[df["annee"] == annee]
 
-    # ======================
-    # KPI
-    # ======================
-    total_dep = df["montant_ttc"].sum()
-    ecart = budget_total - total_dep
-    pct_budget = (total_dep / budget_total * 100) if budget_total else 0
-    pct_ecart = (ecart / budget_total * 100) if budget_total else 0
+    if compte_filtre:
+        df_f = df_f[df_f["compte"].isin(compte_filtre)]
 
-    c1, c2, c3, c4 = st.columns(4)
+    if poste_filtre:
+        df_f = df_f[df_f["poste"].isin(poste_filtre)]
+
+    if fournisseur_filtre:
+        df_f = df_f[df_f["fournisseur"].isin(fournisseur_filtre)]
+
+    if type_filtre:
+        df_f = df_f[df_f["type"].isin(type_filtre)]
+
+    # =========================
+    # KPI (basés sur filtres)
+    # =========================
+    total_dep = df_f["montant_ttc"].sum()
+    nb_lignes = len(df_f)
+    dep_moy = total_dep / nb_lignes if nb_lignes else 0
+
+    c1, c2, c3 = st.columns(3)
     c1.metric("Total dépenses", f"{total_dep:,.2f} €")
-    c2.metric("Budget", f"{budget_total:,.2f} €")
-    c3.metric("Écart", f"{ecart:,.2f} €")
-    c4.metric("% budget consommé", f"{pct_budget:.1f} %")
+    c2.metric("Nombre de lignes", nb_lignes)
+    c3.metric("Dépense moyenne", f"{dep_moy:,.2f} €")
 
-    # ======================
-    # Tableau
-    # ======================
+    # =========================
+    # TABLEAU
+    # =========================
     st.dataframe(
-        df[
+        df_f.sort_values("date")[
             [
-                "depense_id",
                 "date",
                 "compte",
                 "poste",
@@ -82,42 +97,6 @@ def depenses_ui(supabase):
                 "type",
                 "commentaire",
             ]
-        ].sort_values("date"),
+        ],
         use_container_width=True
     )
-
-    # ======================
-    # CRUD
-    # ======================
-    st.subheader("➕ Ajouter une dépense")
-
-    with st.form("add_depense"):
-        col1, col2 = st.columns(2)
-
-        with col1:
-            date = st.date_input("Date")
-            fournisseur = st.text_input("Fournisseur")
-            compte = st.text_input("Compte")
-            montant = st.number_input("Montant TTC", min_value=0.0)
-
-        with col2:
-            poste = st.text_input("Poste")
-            type_dep = st.selectbox("Type", ["Charge", "Avoir", "Remboursement"])
-            commentaire = st.text_area("Commentaire")
-
-        submit = st.form_submit_button("Ajouter")
-
-        if submit:
-            supabase.table("depenses").insert({
-                "annee": annee,
-                "date": str(date),
-                "fournisseur": fournisseur,
-                "compte": compte,
-                "poste": poste,
-                "montant_ttc": montant,
-                "type": type_dep,
-                "commentaire": commentaire
-            }).execute()
-
-            st.success("Dépense ajoutée")
-            st.experimental_rerun()
