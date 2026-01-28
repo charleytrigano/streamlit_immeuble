@@ -134,7 +134,7 @@ def depenses_ui(supabase):
         else:
             dep_id = st.selectbox(
                 "Sélectionner une dépense",
-                df["depenseid"],
+                df["depense_id"],
                 format_func=lambda x: (
                     f"{df[df['id']==x]['date'].iloc[0]} | "
                     f"{df[df['id']==x]['fournisseur'].iloc[0]} | "
