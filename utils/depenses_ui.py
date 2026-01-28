@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import date
 
 
-def depenses_ui(supabase):
+def depenses_ui(supabase, annee):
     st.title("📄 État des dépenses")
 
     # ======================================================
