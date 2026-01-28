@@ -2,135 +2,126 @@ import streamlit as st
 import pandas as pd
 
 
-def etat_depenses_ui(supabase):
-    st.header("🧾 État des dépenses")
+def depenses_ui(supabase):
+    st.header("📄 État des dépenses")
 
-    tabs = st.tabs(["📊 Consulter", "➕ Ajouter", "✏️ Modifier", "🗑 Supprimer"])
-
-    # ======================================================
-    # 📊 CONSULTER
-    # ======================================================
-    with tabs[0]:
-        df = pd.DataFrame(
-            supabase.table("depenses").select("*").execute().data
+    # =========================
+    # CHARGEMENT DÉPENSES
+    # =========================
+    dep_res = (
+        supabase
+        .table("depenses")
+        .select(
+            "depense_id, annee, date, compte, poste, fournisseur, montant_ttc, type, commentaire"
         )
+        .execute()
+    )
 
-        if df.empty:
-            st.info("Aucune dépense enregistrée.")
-            return
+    df = pd.DataFrame(dep_res.data or [])
 
-        # ---------- FILTRES ----------
-        f1, f2, f3 = st.columns(3)
+    if df.empty:
+        st.warning("Aucune dépense enregistrée")
+        return
 
-        with f1:
-            annee = st.selectbox(
-                "Année",
-                ["Toutes"] + sorted(df["annee"].unique().tolist())
-            )
+    df["annee"] = df["annee"].astype(int)
+    df["montant_ttc"] = df["montant_ttc"].astype(float)
+    df["compte"] = df["compte"].astype(str)
 
-        with f2:
-            compte = st.selectbox(
-                "Compte",
-                ["Tous"] + sorted(df["compte"].dropna().unique().tolist())
-            )
+    # Groupe de compte = 3 premiers chiffres
+    df["groupe_compte"] = df["compte"].str[:3]
 
-        with f3:
-            fournisseur = st.selectbox(
-                "Fournisseur",
-                ["Tous"] + sorted(df["fournisseur"].dropna().unique().tolist())
-            )
+    # =========================
+    # SIDEBAR — FILTRES
+    # =========================
+    st.sidebar.subheader("🔎 Filtres dépenses")
 
-        if annee != "Toutes":
-            df = df[df["annee"] == annee]
-        if compte != "Tous":
-            df = df[df["compte"] == compte]
-        if fournisseur != "Tous":
-            df = df[df["fournisseur"] == fournisseur]
+    annee = st.sidebar.selectbox(
+        "Année",
+        sorted(df["annee"].unique())
+    )
 
-        # ---------- KPI ----------
-        dep_pos = df[df["montant_ttc"] > 0]["montant_ttc"].sum()
-        dep_neg = df[df["montant_ttc"] < 0]["montant_ttc"].sum()
+    comptes = sorted(df["compte"].dropna().unique())
+    compte_filtre = st.sidebar.multiselect("Compte", comptes)
 
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Dépenses brutes (€)", f"{dep_pos:,.0f}")
-        k2.metric("Avoirs (€)", f"{dep_neg:,.0f}")
-        k3.metric("Net (€)", f"{dep_pos + dep_neg:,.0f}")
-        k4.metric("Lignes", len(df))
+    postes = sorted(df["poste"].dropna().unique())
+    poste_filtre = st.sidebar.multiselect("Poste", postes)
 
-        # ---------- TABLEAU ----------
-        if "pdf_url" in df.columns:
-            df["Facture"] = df["pdf_url"].apply(
-                lambda x: f"[📄 Ouvrir]({x})" if pd.notna(x) else ""
-            )
+    fournisseurs = sorted(df["fournisseur"].dropna().unique())
+    fournisseur_filtre = st.sidebar.multiselect("Fournisseur", fournisseurs)
 
-        st.dataframe(
-            df.sort_values("date", ascending=False),
-            use_container_width=True
-        )
+    types = sorted(df["type"].dropna().unique())
+    type_filtre = st.sidebar.multiselect("Type", types)
 
-    # ======================================================
-    # ➕ AJOUTER
-    # ======================================================
-    with tabs[1]:
-        st.subheader("➕ Ajouter une dépense")
+    # =========================
+    # APPLICATION FILTRES
+    # =========================
+    df_f = df[df["annee"] == annee]
 
-        with st.form("add_depense"):
-            annee = st.number_input("Année", value=2025)
-            compte = st.text_input("Compte")
-            poste = st.text_input("Poste")
-            fournisseur = st.text_input("Fournisseur")
-            date = st.date_input("Date")
-            montant = st.number_input("Montant TTC", step=0.01)
-            pdf_url = st.text_input("Lien facture (Google Drive / preview)")
+    if compte_filtre:
+        df_f = df_f[df_f["compte"].isin(compte_filtre)]
 
-            if st.form_submit_button("Enregistrer"):
-                supabase.table("depenses").insert({
-                    "annee": annee,
-                    "compte": compte,
-                    "poste": poste,
-                    "fournisseur": fournisseur,
-                    "date": str(date),
-                    "montant_ttc": montant,
-                    "pdf_url": pdf_url,
-                }).execute()
+    if poste_filtre:
+        df_f = df_f[df_f["poste"].isin(poste_filtre)]
 
-                st.success("Dépense ajoutée")
+    if fournisseur_filtre:
+        df_f = df_f[df_f["fournisseur"].isin(fournisseur_filtre)]
 
-    # ======================================================
-    # ✏️ MODIFIER
-    # ======================================================
-    with tabs[2]:
-        df = pd.DataFrame(
-            supabase.table("depenses").select("*").execute().data
-        )
+    if type_filtre:
+        df_f = df_f[df_f["type"].isin(type_filtre)]
 
-        dep_id = st.selectbox(
-            "Dépense",
-            df["id"],
-            format_func=lambda i: f"{df.loc[df['id']==i, 'poste'].values[0]}"
-        )
+    # =========================
+    # KPI — RÉEL
+    # =========================
+    total_reel = df_f["montant_ttc"].sum()
+    nb_lignes = len(df_f)
+    dep_moy = total_reel / nb_lignes if nb_lignes else 0
 
-        dep = df[df["id"] == dep_id].iloc[0]
+    # =========================
+    # CHARGEMENT BUDGET
+    # =========================
+    groupes_utilises = df_f["groupe_compte"].unique().tolist()
 
-        new_montant = st.number_input(
-            "Montant TTC",
-            value=float(dep["montant_ttc"])
-        )
+    bud_res = (
+        supabase
+        .table("budgets")
+        .select("annee, groupe_compte, libelle_groupe, budget")
+        .eq("annee", annee)
+        .in_("groupe_compte", groupes_utilises)
+        .execute()
+    )
 
-        if st.button("Mettre à jour"):
-            supabase.table("depenses") \
-                .update({"montant_ttc": new_montant}) \
-                .eq("id", dep_id) \
-                .execute()
+    df_bud = pd.DataFrame(bud_res.data or [])
 
-            st.success("Dépense mise à jour")
+    budget_total = df_bud["budget"].sum() if not df_bud.empty else 0
+    ecart = budget_total - total_reel
+    pct_budget = (total_reel / budget_total * 100) if budget_total else 0
+    pct_ecart = (ecart / budget_total * 100) if budget_total else 0
 
-    # ======================================================
-    # 🗑 SUPPRIMER
-    # ======================================================
-    with tabs[3]:
-        dep_id = st.selectbox("Dépense à supprimer", df["id"])
+    # =========================
+    # KPI — AFFICHAGE
+    # =========================
+    c1, c2, c3, c4, c5 = st.columns(5)
 
-        if st.button("Supprimer définitivement"):
-            supabase.table("depenses").delete().eq("id", dep_id).execute()
-            st.success("Dépense supprimée")
+    c1.metric("Total dépenses", f"{total_reel:,.2f} €")
+    c2.metric("Budget", f"{budget_total:,.2f} €")
+    c3.metric("Écart", f"{ecart:,.2f} €")
+    c4.metric("% budget consommé", f"{pct_budget:.1f} %")
+    c5.metric("% écart", f"{pct_ecart:.1f} %")
+
+    # =========================
+    # TABLEAU DÉPENSES
+    # =========================
+    st.dataframe(
+        df_f.sort_values("date")[
+            [
+                "date",
+                "compte",
+                "poste",
+                "fournisseur",
+                "montant_ttc",
+                "type",
+                "commentaire",
+            ]
+        ],
+        use_container_width=True
+    )
