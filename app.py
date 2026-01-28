@@ -2,183 +2,141 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 
-# ======================
-# CONFIG
-# ======================
+# ---------------- CONFIG ----------------
 st.set_page_config(page_title="Pilotage des charges", layout="wide")
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_ANON_KEY"]
-
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ======================
-# LOADERS
-# ======================
+# ---------------- UTILS ----------------
 @st.cache_data
 def load_table(name):
-    data = supabase.table(name).select("*").execute().data
-    return pd.DataFrame(data)
+    return pd.DataFrame(
+        supabase.table(name).select("*").execute().data
+    )
 
+def refresh():
+    st.cache_data.clear()
+    st.experimental_rerun()
+
+# ---------------- DATA ----------------
 df_dep = load_table("depenses")
-df_plan = load_table("plan_comptable")
 df_bud = load_table("budgets")
+df_plan = load_table("plan_comptable")
 
-# ======================
-# FILTRE ANNÉE
-# ======================
-annee = st.sidebar.selectbox(
-    "Année",
-    sorted(df_dep["annee"].unique())
-)
+# ---------------- SIDEBAR ----------------
+annees = sorted(df_dep["annee"].dropna().unique())
+annee = st.sidebar.selectbox("Année", annees)
 
-# ======================
-# KPI
-# ======================
+# ---------------- KPI ----------------
 dep_y = df_dep[df_dep["annee"] == annee]
 bud_y = df_bud[df_bud["annee"] == annee]
 
-total_dep = dep_y["montant_ttc"].sum()
+total_dep = dep_y["montant"].sum()
 total_bud = bud_y["budget"].sum()
 ecart = total_bud - total_dep
 
 c1, c2, c3 = st.columns(3)
-c1.metric("Dépenses réelles", f"{total_dep:,.0f} €")
-c2.metric("Budget", f"{total_bud:,.0f} €")
-c3.metric("Écart", f"{ecart:,.0f} €")
+c1.metric("Dépenses", f"{total_dep:,.2f} €")
+c2.metric("Budget", f"{total_bud:,.2f} €")
+c3.metric("Écart", f"{ecart:,.2f} €")
 
-st.divider()
+# ---------------- ONGLET ----------------
+tab1, tab2 = st.tabs(["Dépenses", "Budgets"])
 
-# ======================
-# ONGLET PRINCIPAL
-# ======================
-tabs = st.tabs(["📊 Dépenses", "📘 Plan comptable", "💰 Budget"])
-
-# ======================
-# DÉPENSES (LECTURE SEULE)
-# ======================
-with tabs[0]:
-    st.subheader("État des dépenses")
-
-    df_disp = dep_y.merge(
-        df_plan[["compte_8", "groupe_compte", "libelle_groupe"]],
-        left_on="compte",
-        right_on="compte_8",
-        how="left"
-    )
+# ======================================================
+# ===================== DEPENSES =======================
+# ======================================================
+with tab1:
+    st.subheader("Dépenses")
 
     st.dataframe(
-        df_disp[
-            [
-                "date",
-                "annee",
-                "compte",
-                "poste",
-                "fournisseur",
-                "groupe_compte",
-                "libelle_groupe",
-                "montant_ttc",
-                "commentaire",
-            ]
-        ],
+        dep_y.sort_values("date"),
         use_container_width=True
     )
 
+    with st.expander("➕ Ajouter une dépense"):
+        with st.form("add_dep"):
+            date = st.date_input("Date")
+            compte = st.selectbox("Compte", df_plan["compte_8"])
+            ligne = df_plan[df_plan["compte_8"] == compte].iloc[0]
 
-st.subheader("➕ Ajouter une dépense")
+            montant = st.number_input("Montant", step=0.01)
+            fournisseur = st.text_input("Fournisseur")
+            commentaire = st.text_input("Commentaire")
 
-with st.form("add_depense"):
-    d1, d2, d3 = st.columns(3)
+            if st.form_submit_button("Ajouter"):
+                supabase.table("depenses").insert({
+                    "date": str(date),
+                    "annee": date.year,
+                    "compte_8": compte,
+                    "libelle": ligne["libelle"],
+                    "groupe_compte": ligne["groupe_compte"],
+                    "libelle_groupe": ligne["libelle_groupe"],
+                    "montant": montant,
+                    "fournisseur": fournisseur,
+                    "commentaire": commentaire
+                }).execute()
+                refresh()
 
-    date = d1.date_input("Date")
-    compte = d2.selectbox("Compte", df_plan["compte_8"].sort_values())
-    fournisseur = d3.text_input("Fournisseur")
-
-    poste = st.text_input("Libellé / Poste")
-    montant = st.number_input("Montant TTC", min_value=0.0)
-    commentaire = st.text_area("Commentaire")
-
-    submit = st.form_submit_button("Enregistrer")
-
-    if submit:
-        supabase.table("depenses").insert({
-            "annee": annee,
-            "date": str(date),
-            "compte": compte,
-            "poste": poste,
-            "fournisseur": fournisseur,
-            "montant_ttc": montant,
-            "commentaire": commentaire
-        }).execute()
-
-        st.success("Dépense ajoutée")
-        st.experimental_rerun()
-
-# ======================
-# PLAN COMPTABLE (VERROUILLÉ)
-# ======================
-with tabs[1]:
-    st.subheader("Plan comptable (lecture seule)")
-
-    df_pc = df_plan[
-        (df_plan["compte_8"].notna()) &
-        (df_plan["libelle_groupe"] != "000")
-    ]
-
-    st.dataframe(
-        df_pc.sort_values(["groupe_compte", "compte_8"]),
-        use_container_width=True
-    )
-
-    st.info("Le plan comptable est verrouillé.")
-
-# ======================
-# BUDGET (MODIFIABLE)
-# ======================
-with tabs[2]:
-    st.subheader("Budget par groupe")
-
-    st.dataframe(
-        bud_y[
-            [
-                "groupe_compte",
-                "libelle_groupe",
-                "budget"
-            ]
-        ].sort_values("groupe_compte"),
-        use_container_width=True
-    )
-
-    st.divider()
-    st.subheader("Ajouter / modifier un budget")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        grp = st.selectbox(
-            "Groupe",
-            sorted(df_plan["groupe_compte"].unique())
+    with st.expander("🗑 Supprimer une dépense"):
+        dep_id = st.selectbox(
+            "Dépense",
+            dep_y["depense_id"],
+            format_func=lambda x: f"ID {x}"
         )
+        if st.button("Supprimer"):
+            supabase.table("depenses").delete().eq(
+                "depense_id", dep_id
+            ).execute()
+            refresh()
 
-    with col2:
-        lib_grp = (
-            df_plan[df_plan["groupe_compte"] == grp]
-            ["libelle_groupe"]
-            .iloc[0]
+# ======================================================
+# ====================== BUDGETS =======================
+# ======================================================
+with tab2:
+    st.subheader("Budgets par groupe")
+
+    grp = (
+        bud_y.groupby(["groupe_compte", "libelle_groupe"], as_index=False)
+        .agg({"budget": "sum"})
+        .sort_values("groupe_compte")
+    )
+
+    st.dataframe(grp, use_container_width=True)
+
+    with st.expander("➕ Ajouter / modifier un budget"):
+        with st.form("add_bud"):
+            g = st.selectbox(
+                "Groupe",
+                sorted(df_plan["groupe_compte"].unique())
+            )
+            lib = df_plan[df_plan["groupe_compte"] == g]["libelle_groupe"].iloc[0]
+            val = st.number_input("Budget", step=100.0)
+
+            if st.form_submit_button("Enregistrer"):
+                exist = bud_y[bud_y["groupe_compte"] == g]
+                if len(exist) == 0:
+                    supabase.table("budgets").insert({
+                        "annee": annee,
+                        "groupe_compte": g,
+                        "libelle_groupe": lib,
+                        "budget": val
+                    }).execute()
+                else:
+                    supabase.table("budgets").update({
+                        "budget": val,
+                        "libelle_groupe": lib
+                    }).eq("id", exist.iloc[0]["id"]).execute()
+                refresh()
+
+    with st.expander("🗑 Supprimer un budget"):
+        bid = st.selectbox(
+            "Budget",
+            bud_y["id"],
+            format_func=lambda x: f"ID {x}"
         )
-        st.text_input("Libellé groupe", lib_grp, disabled=True)
-
-    with col3:
-        montant = st.number_input("Budget", min_value=0.0)
-
-    if st.button("💾 Enregistrer"):
-        supabase.table("budgets").upsert(
-            {
-                "annee": annee,
-                "groupe_compte": grp,
-                "libelle_groupe": lib_grp,
-                "budget": montant,
-            }
-        ).execute()
-        st.success("Budget enregistré")
-        st.experimental_rerun()
+        if st.button("Supprimer"):
+            supabase.table("budgets").delete().eq("id", bid).execute()
+            refresh()
