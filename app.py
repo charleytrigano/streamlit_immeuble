@@ -2,241 +2,154 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 
-# =====================================================
-# CONFIG
-# =====================================================
-st.set_page_config(page_title="📄 État des dépenses", layout="wide")
+# ---------------- CONFIG ----------------
+st.set_page_config(page_title="Pilotage des charges", layout="wide")
 
-# =====================================================
-# SUPABASE
-# =====================================================
-@st.cache_resource
-def get_supabase():
-    return create_client(
-        st.secrets["SUPABASE_URL"],
-        st.secrets["SUPABASE_ANON_KEY"]
-    )
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
 
-# =====================================================
-# UTILS
-# =====================================================
+supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+# ---------------- HELPERS ----------------
+def load_table(name):
+    res = supabase.table(name).select("*").execute()
+    return pd.DataFrame(res.data) if res.data else pd.DataFrame()
+
 def euro(x):
     return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
-# =====================================================
-# MAIN
-# =====================================================
+# ---------------- MAIN ----------------
 def main():
-    supabase = get_supabase()
+    st.title("📊 Pilotage des charges – Budget vs Réel")
 
-    st.title("📄 État des dépenses")
+    # ---------- LOAD DATA ----------
+    df_dep = load_table("depenses")
+    df_bud = load_table("budgets")
 
-    # =================================================
-    # CHARGEMENT DÉPENSES
-    # =================================================
-    resp = (
-        supabase
-        .table("depenses")
-        .select("""
-            depense_id,
-            annee,
-            compte,
-            poste,
-            fournisseur,
-            date,
-            montant_ttc,
-            type,
-            commentaire,
-            lot_id,
-            pdf_url
-        """)
-        .order("date", desc=True)
-        .execute()
-    )
-
-    df = pd.DataFrame(resp.data)
-
-    if df.empty:
-        st.warning("Aucune dépense enregistrée.")
+    if df_dep.empty:
+        st.warning("Aucune dépense enregistrée")
         return
 
-    # Typage
-    df["annee"] = df["annee"].astype(int)
-    df["montant_ttc"] = df["montant_ttc"].astype(float)
-    df["date"] = pd.to_datetime(df["date"])
-
-    # =================================================
-    # SIDEBAR – FILTRES
-    # =================================================
-    st.sidebar.header("🔎 Filtres")
-
-    annee = st.sidebar.selectbox(
+    # ---------- FILTRES ----------
+    annee = st.selectbox(
         "Année",
-        sorted(df["annee"].unique())
+        sorted(df_dep["annee"].dropna().unique(), reverse=True)
     )
 
-    compte = st.sidebar.selectbox(
-        "Compte",
-        ["Tous"] + sorted(df["compte"].dropna().unique().tolist())
-    )
+    dep_y = df_dep[df_dep["annee"] == annee].copy()
+    bud_y = df_bud[df_bud["annee"] == annee].copy() if not df_bud.empty else pd.DataFrame()
 
-    fournisseur = st.sidebar.selectbox(
-        "Fournisseur",
-        ["Tous"] + sorted(df["fournisseur"].dropna().unique().tolist())
-    )
+    # ---------- NORMALISATION ----------
+    dep_y["montant_ttc"] = pd.to_numeric(dep_y["montant_ttc"], errors="coerce").fillna(0)
 
-    poste = st.sidebar.selectbox(
-        "Poste",
-        ["Tous"] + sorted(df["poste"].dropna().unique().tolist())
-    )
+    # sens comptable sécurisé
+    sens_valides = ["Charge", "Avoir", "Remboursement"]
+    dep_y["sens"] = dep_y["sens"].where(dep_y["sens"].isin(sens_valides), "Charge")
 
-    lot = st.sidebar.selectbox(
-        "Lot",
-        ["Tous"] + sorted(df["lot_id"].dropna().astype(str).unique().tolist())
-    )
+    # ---------- KPI ----------
+    total_charges = dep_y[dep_y["sens"] == "Charge"]["montant_ttc"].sum()
+    total_avoirs = dep_y[dep_y["sens"] == "Avoir"]["montant_ttc"].sum()
+    total_remb = dep_y[dep_y["sens"] == "Remboursement"]["montant_ttc"].sum()
 
-    # Application filtres
-    df_f = df[df["annee"] == annee]
+    net_reel = total_charges - total_avoirs - total_remb
+    budget_total = bud_y["budget"].sum() if not bud_y.empty else 0
+    ecart = net_reel - budget_total
 
-    if compte != "Tous":
-        df_f = df_f[df_f["compte"] == compte]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Charges réelles", euro(net_reel))
+    c2.metric("Budget", euro(budget_total))
+    c3.metric("Écart", euro(ecart), delta_color="inverse")
+    c4.metric("Avoirs", euro(total_avoirs))
 
-    if fournisseur != "Tous":
-        df_f = df_f[df_f["fournisseur"] == fournisseur]
+    st.divider()
 
-    if poste != "Tous":
-        df_f = df_f[df_f["poste"] == poste]
+    # ---------- DEPENSES ----------
+    st.subheader("📋 Dépenses")
 
-    if lot != "Tous":
-        df_f = df_f[df_f["lot_id"].astype(str) == lot]
+    dep_display_cols = [
+        "depense_id",
+        "date",
+        "compte",
+        "poste",
+        "fournisseur",
+        "type",
+        "sens",
+        "montant_ttc",
+        "commentaire"
+    ]
 
-    # =================================================
-    # KPI
-    # =================================================
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("💸 Total dépenses", euro(df_f["montant_ttc"].sum()))
-    col2.metric("🧾 Nombre de lignes", len(df_f))
-    col3.metric(
-        "📊 Dépense moyenne",
-        euro(df_f["montant_ttc"].mean()) if len(df_f) > 0 else "0 €"
-    )
-
-    # =================================================
-    # TABLEAU
-    # =================================================
-    df_f["Facture"] = df_f["pdf_url"].apply(
-        lambda x: f"[📄 Ouvrir]({x})" if pd.notna(x) and x != "" else ""
-    )
+    dep_disp = dep_y[[c for c in dep_display_cols if c in dep_y.columns]].sort_values("date")
 
     st.dataframe(
-        df_f[[
-            "date",
-            "compte",
-            "poste",
-            "fournisseur",
-            "montant_ttc",
-            "type",
-            "lot_id",
-            "commentaire",
-            "Facture"
-        ]].rename(columns={
-            "date": "Date",
-            "compte": "Compte",
-            "poste": "Poste",
-            "fournisseur": "Fournisseur",
-            "montant_ttc": "Montant TTC (€)",
-            "type": "Type",
-            "lot_id": "Lot",
-            "commentaire": "Commentaire"
-        }),
-        use_container_width=True
+        dep_disp,
+        use_container_width=True,
+        column_config={
+            "montant_ttc": st.column_config.NumberColumn("Montant TTC", format="%.2f €")
+        }
     )
 
-    # =================================================
-    # CRUD
-    # =================================================
     st.divider()
-    tab_add, tab_edit, tab_del = st.tabs(["➕ Ajouter", "✏️ Modifier", "🗑 Supprimer"])
 
-    # -----------------------------
-    # AJOUT
-    # -----------------------------
-    with tab_add:
-        st.subheader("Ajouter une dépense")
+    # ---------- BUDGET PAR GROUPE ----------
+    st.subheader("📊 Budget par groupe")
 
-        with st.form("add_depense"):
-            data = {
-                "annee": st.number_input("Année", min_value=2000, max_value=2100, value=annee),
-                "date": st.date_input("Date"),
-                "compte": st.text_input("Compte (8 chiffres)"),
-                "poste": st.text_input("Poste"),
-                "fournisseur": st.text_input("Fournisseur"),
-                "montant_ttc": st.number_input("Montant TTC", step=0.01),
-                "type": st.selectbox("Type", ["Charge", "Avoir", "Remboursement"]),
-                "lot_id": st.text_input("Lot (optionnel)"),
-                "commentaire": st.text_area("Commentaire"),
-                "pdf_url": st.text_input("Lien facture (pdf_url)")
-            }
-
-            if st.form_submit_button("Enregistrer"):
-                supabase.table("depenses").insert(data).execute()
-                st.success("Dépense ajoutée")
-                st.experimental_rerun()
-
-    # -----------------------------
-    # MODIFIER
-    # -----------------------------
-    with tab_edit:
-        st.subheader("Modifier une dépense")
-
-        dep_id = st.selectbox(
-            "Sélection",
-            df_f["depense_id"],
-            format_func=lambda x: f"ID {x}"
+    if bud_y.empty:
+        st.info("Aucun budget pour cette année")
+    else:
+        bud_grp = (
+            bud_y
+            .groupby(["groupe_compte", "libelle_groupe"], as_index=False)["budget"]
+            .sum()
+            .sort_values("groupe_compte")
         )
 
-        dep = df[df["depense_id"] == dep_id].iloc[0]
-
-        with st.form("edit_depense"):
-            new_data = {
-                "date": st.date_input("Date", dep["date"]),
-                "compte": st.text_input("Compte", dep["compte"]),
-                "poste": st.text_input("Poste", dep["poste"]),
-                "fournisseur": st.text_input("Fournisseur", dep["fournisseur"]),
-                "montant_ttc": st.number_input("Montant TTC", value=float(dep["montant_ttc"]), step=0.01),
-                "type": st.selectbox("Type", ["Charge", "Avoir", "Remboursement"],
-                                     index=["Charge", "Avoir", "Remboursement"].index(dep["type"])),
-                "lot_id": st.text_input("Lot", dep["lot_id"] if dep["lot_id"] else ""),
-                "commentaire": st.text_area("Commentaire", dep["commentaire"]),
-                "pdf_url": st.text_input("Lien facture", dep["pdf_url"])
+        st.dataframe(
+            bud_grp,
+            use_container_width=True,
+            column_config={
+                "budget": st.column_config.NumberColumn("Budget", format="%.2f €")
             }
-
-            if st.form_submit_button("Mettre à jour"):
-                supabase.table("depenses").update(new_data).eq("depense_id", dep_id).execute()
-                st.success("Dépense modifiée")
-                st.experimental_rerun()
-
-    # -----------------------------
-    # SUPPRIMER
-    # -----------------------------
-    with tab_del:
-        st.subheader("Supprimer une dépense")
-
-        del_id = st.selectbox(
-            "Sélection",
-            df_f["depense_id"],
-            format_func=lambda x: f"ID {x}"
         )
 
-        if st.button("❌ Supprimer définitivement"):
-            supabase.table("depenses").delete().eq("depense_id", del_id).execute()
-            st.success("Dépense supprimée")
-            st.experimental_rerun()
+    # ---------- AJOUT DEPENSE ----------
+    st.divider()
+    st.subheader("➕ Ajouter une dépense")
 
+    with st.form("add_depense"):
+        col1, col2, col3 = st.columns(3)
 
-# =====================================================
-# RUN
-# =====================================================
+        with col1:
+            date = st.date_input("Date")
+            compte = st.text_input("Compte")
+            poste = st.text_input("Poste")
+
+        with col2:
+            fournisseur = st.text_input("Fournisseur")
+            type_libre = st.text_input("Type (libre)")
+            sens = st.selectbox("Sens comptable", sens_valides)
+
+        with col3:
+            montant = st.number_input("Montant TTC", min_value=0.0, step=0.01)
+            commentaire = st.text_input("Commentaire")
+
+        submit = st.form_submit_button("Enregistrer")
+
+        if submit:
+            supabase.table("depenses").insert({
+                "annee": annee,
+                "date": str(date),
+                "compte": compte,
+                "poste": poste,
+                "fournisseur": fournisseur,
+                "type": type_libre,
+                "sens": sens,
+                "montant_ttc": montant,
+                "commentaire": commentaire
+            }).execute()
+
+            st.success("Dépense ajoutée")
+            st.rerun()
+
+# ---------------- RUN ----------------
 if __name__ == "__main__":
     main()
