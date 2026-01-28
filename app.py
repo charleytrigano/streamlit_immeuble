@@ -5,10 +5,7 @@ from supabase import create_client
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(
-    page_title="Pilotage des charges",
-    layout="wide"
-)
+st.set_page_config(page_title="Pilotage des charges", layout="wide")
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
@@ -55,7 +52,6 @@ df_dep = df_dep.merge(
 # SIDEBAR
 # =========================
 st.sidebar.title("🔎 Filtres")
-
 annees = sorted(df_dep["annee"].dropna().unique())
 annee_sel = st.sidebar.selectbox("Année", annees)
 
@@ -119,40 +115,34 @@ with tab1:
 # =========================
 with tab2:
     st.subheader("📚 Plan comptable (verrouillé)")
-
-    st.info(
-        "Le plan comptable est verrouillé.\n"
-        "Les comptes invalides ont été supprimés automatiquement."
-    )
-
     st.dataframe(
         df_plan.sort_values(["groupe_compte", "compte_8"]),
         use_container_width=True
     )
 
 # =========================
-# TAB 3 — BUDGET (CRUD)
+# TAB 3 — BUDGET
 # =========================
 with tab3:
     st.subheader("💰 Budget par groupe")
 
-    st.dataframe(
-        df_bud_y[[
-            "groupe_compte",
-            "libelle_groupe",
-            "budget"
-        ]].sort_values("groupe_compte"),
-        use_container_width=True
-    )
+    # ⚠️ SÉLECTION SÉCURISÉE DES COLONNES
+    bud_cols = ["groupe_compte", "libelle_groupe", "budget"]
+    bud_cols = [c for c in bud_cols if c in df_bud_y.columns]
 
-    st.metric(
-        "Total budget",
-        euro(budget_total)
-    )
+    if df_bud_y.empty or not bud_cols:
+        st.warning("Aucun budget enregistré pour cette année.")
+    else:
+        st.dataframe(
+            df_bud_y[bud_cols].sort_values("groupe_compte"),
+            use_container_width=True
+        )
+
+    st.metric("Total budget", euro(budget_total))
 
     st.divider()
 
-    # -------- FORM ADD / UPDATE --------
+    # ===== FORM ADD / UPDATE =====
     st.subheader("➕ Ajouter / Modifier un budget")
 
     with st.form("budget_form"):
@@ -160,25 +150,20 @@ with tab3:
         libelle_grp = st.text_input("Libellé du groupe (ex : Eau)")
         montant = st.number_input("Budget (€)", min_value=0.0)
 
-        submit = st.form_submit_button("Enregistrer")
-
-        if submit:
+        if st.form_submit_button("Enregistrer"):
             supabase.table("budgets").upsert({
                 "annee": annee_sel,
                 "groupe_compte": groupe,
                 "libelle_groupe": libelle_grp,
                 "budget": montant
             }).execute()
-
             st.success("Budget enregistré")
             st.rerun()
 
     st.divider()
 
-    # -------- DELETE --------
-    st.subheader("🗑️ Supprimer un budget")
-
-    if not df_bud_y.empty:
+    # ===== DELETE =====
+    if not df_bud_y.empty and "groupe_compte" in df_bud_y.columns:
         grp_del = st.selectbox(
             "Groupe à supprimer",
             df_bud_y["groupe_compte"].unique()
@@ -190,6 +175,5 @@ with tab3:
                 .eq("annee", annee_sel) \
                 .eq("groupe_compte", grp_del) \
                 .execute()
-
             st.success("Budget supprimé")
             st.rerun()
