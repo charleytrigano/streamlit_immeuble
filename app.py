@@ -1,31 +1,37 @@
 import streamlit as st
-from supabase import create_client
+from supabase import create_client, Client
 
 from utils.depenses_ui import depenses_ui
 from utils.budget_ui import budget_ui
 from utils.plan_comptable_ui import plan_comptable_ui
 
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
 
-supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+# =========================
+# Config & connexion Supabase
+# =========================
+
+st.set_page_config(
+    page_title="Pilotage des charges",
+    page_icon="📊",
+    layout="wide",
+)
+
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_ANON_KEY"]
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def main():
-    st.set_page_config(page_title="Pilotage des charges", layout="wide")
+    tabs = st.tabs(["📄 Dépenses", "📑 Budgets", "📘 Plan comptable"])
 
-    page = st.sidebar.radio(
-        "Navigation",
-        ["Dépenses", "Budgets", "Plan comptable"]
-    )
-
-    if page == "Dépenses":
+    with tabs[0]:
         depenses_ui(supabase)
 
-    elif page == "Budgets":
+    with tabs[1]:
         budget_ui(supabase)
 
-    elif page == "Plan comptable":
+    with tabs[2]:
         plan_comptable_ui(supabase)
 
 
