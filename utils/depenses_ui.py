@@ -4,6 +4,7 @@ from datetime import date
 import uuid
 
 
+
 TYPES = ["Charge", "Remboursement", "Avoir"]
 
 
