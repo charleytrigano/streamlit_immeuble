@@ -1,6 +1,9 @@
 import streamlit as st
 from supabase import create_client
 
+from utils.budget_vs_reel_ui import budget_vs_reel_ui
+budget_vs_reel_ui(supabase, annee)
+
 # =========================
 # CONFIG STREAMLIT
 # =========================
