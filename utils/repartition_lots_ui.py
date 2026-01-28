@@ -8,6 +8,14 @@ def euro(x):
     return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
 
+def find_common_key(df1, df2, candidates):
+    """Retourne la première colonne commune trouvée"""
+    for c in candidates:
+        if c in df1.columns and c in df2.columns:
+            return c
+    return None
+
+
 def repartition_lots_ui(supabase, annee):
     st.header("🏢 Répartition des charges par lot")
 
@@ -27,32 +35,43 @@ def repartition_lots_ui(supabase, annee):
     df_lots = pd.DataFrame(lots)
 
     # ======================================================
-    # NORMALISATION DES CLÉS
+    # CLÉS DE JOINTURE (AUTO-DÉTECTION)
     # ======================================================
-    if "lot_id" not in df_lots.columns:
-        st.error("❌ Colonne `lot_id` absente de la table lots")
-        return
+    dep_key = find_common_key(
+        df_rep,
+        df_dep,
+        ["depense_id", "depense_uuid", "id"]
+    )
 
-    if "lot_id" not in df_rep.columns:
-        st.error("❌ Colonne `lot_id` absente de la table repartition_depenses")
-        return
+    lot_key = find_common_key(
+        df_rep,
+        df_lots,
+        ["lot_id", "lot", "lot_uuid", "id"]
+    )
 
-    if "depense_id" not in df_rep.columns:
-        st.error("❌ Colonne `depense_id` absente de la table repartition_depenses")
-        return
+    if not dep_key:
+        st.error("❌ Impossible de relier les dépenses à la répartition (clé manquante).")
+        st.stop()
 
-    if "depense_id" not in df_dep.columns:
-        st.error("❌ Colonne `depense_id` absente de la table depenses")
-        return
+    if not lot_key:
+        st.error("❌ Impossible de relier les lots à la répartition (clé manquante).")
+        st.stop()
 
     # ======================================================
     # MERGE GLOBAL
     # ======================================================
     df = (
         df_rep
-        .merge(df_dep, on="depense_id", how="left")
-        .merge(df_lots, on="lot_id", how="left")
+        .merge(df_dep, on=dep_key, how="left")
+        .merge(df_lots, on=lot_key, how="left", suffixes=("", "_lot"))
     )
+
+    # ======================================================
+    # CONTRÔLES
+    # ======================================================
+    if "montant_ttc" not in df.columns or "quote_part" not in df.columns:
+        st.error("❌ Colonnes nécessaires absentes (montant_ttc / quote_part).")
+        st.stop()
 
     # ======================================================
     # CALCUL DES CHARGES
@@ -62,15 +81,18 @@ def repartition_lots_ui(supabase, annee):
     )
 
     # ======================================================
-    # AGRÉGATION PAR LOT
+    # COLONNES DESCRIPTIVES LOT
     # ======================================================
-    group_cols = ["lot_id"]
+    lot_cols = []
+    for c in ["numero_lot", "lot", "etage", "usage", "proprietaire", "locataire"]:
+        if c in df.columns:
+            lot_cols.append(c)
 
-    # Ajout dynamique des colonnes descriptives si présentes
-    for col in ["numero_lot", "etage", "usage", "proprietaire", "locataire"]:
-        if col in df.columns:
-            group_cols.append(col)
+    group_cols = [lot_key] + lot_cols
 
+    # ======================================================
+    # AGRÉGATION
+    # ======================================================
     result = (
         df
         .groupby(group_cols, as_index=False)
@@ -88,4 +110,4 @@ def repartition_lots_ui(supabase, annee):
         use_container_width=True
     )
 
-    st.caption("Répartition calculée sur la base des tantièmes (10 000)")
+    st.caption("Répartition calculée à partir des tantièmes (base 10 000)")
