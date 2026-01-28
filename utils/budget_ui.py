@@ -8,8 +8,12 @@ def euro(x):
     return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
 
-def budget_ui(supabase, annee):
+def budget_ui(supabase, annee: int):
+    # =============================
+    # EN-TÊTE
+    # =============================
     st.header("💰 Budget annuel")
+    st.caption(f"Année budgétaire : **{annee}**")
 
     # =============================
     # CHARGEMENT DES DONNÉES
@@ -25,7 +29,7 @@ def budget_ui(supabase, annee):
     data = res.data or []
     df = pd.DataFrame(data)
 
-    st.caption(f"📌 Budgets trouvés : {len(df)} lignes")
+    st.caption(f"📌 Budgets trouvés : {len(df)} ligne(s)")
 
     # =============================
     # KPI
@@ -41,8 +45,8 @@ def budget_ui(supabase, annee):
 
     k1, k2, k3 = st.columns(3)
     k1.metric("💰 Budget total", euro(total_budget))
-    k2.metric("📂 Groupes", nb_groupes)
-    k3.metric("📊 Budget moyen", euro(budget_moyen))
+    k2.metric("📂 Groupes de comptes", nb_groupes)
+    k3.metric("📊 Budget moyen / groupe", euro(budget_moyen))
 
     st.divider()
 
@@ -51,23 +55,29 @@ def budget_ui(supabase, annee):
     # =============================
     with st.expander("➕ Ajouter un budget", expanded=False):
         with st.form("add_budget"):
-            groupe = st.text_input("Groupe de compte (ex: 606)")
-            libelle = st.text_input("Libellé groupe")
-            montant = st.number_input("Montant (€)", min_value=0.0, step=100.0)
+            st.caption(f"Année : **{annee}** (fixée par le filtre global)")
 
-            submitted = st.form_submit_button("Ajouter")
+            groupe = st.text_input("Groupe de compte (ex : 606)")
+            libelle = st.text_input("Libellé du groupe")
+            montant = st.number_input(
+                "Montant budget (€)",
+                min_value=0.0,
+                step=100.0
+            )
+
+            submitted = st.form_submit_button("Ajouter ce budget")
 
             if submitted:
                 if not groupe or montant <= 0:
-                    st.error("Groupe et montant obligatoires")
+                    st.error("🔴 Groupe de compte et montant sont obligatoires.")
                 else:
                     supabase.table("budgets").insert({
-                        "annee": annee,
+                        "annee": annee,              # ✅ année bien enregistrée
                         "groupe_compte": groupe,
                         "libelle_groupe": libelle,
                         "budget": montant
                     }).execute()
-                    st.success("Budget ajouté")
+                    st.success("✅ Budget ajouté.")
                     st.rerun()
 
     # =============================
@@ -79,25 +89,38 @@ def budget_ui(supabase, annee):
 
     st.subheader("📋 Budgets par groupe")
 
+    # On trie par groupe pour une lecture propre
+    df = df.sort_values(["groupe_compte", "libelle_groupe"])
+
     for _, row in df.iterrows():
         with st.container(border=True):
-            c1, c2, c3, c4 = st.columns([2, 3, 2, 2])
+            c0, c1, c2, c3, c4 = st.columns([1, 2, 3, 2, 2])
 
+            # Année (read-only)
+            c0.write(f"**{int(row['annee'])}**")
+
+            # Groupe + libellé + montant
             c1.write(f"**{row['groupe_compte']}**")
             c2.write(row.get("libelle_groupe", ""))
             c3.write(euro(row["budget"]))
 
-            # =============================
-            # MODIFIER
-            # =============================
+            # Bouton ouvrir édition
             with c4:
-                if st.button("✏️ Modifier", key=f"edit_{row['id']}"):
-                    st.session_state[f"edit_{row['id']}"] = True
+                edit_key = f"edit_{row['id']}"
+                if st.button("✏️ Modifier", key=edit_key):
+                    st.session_state[edit_key] = True
 
+            # Formulaire d'édition / suppression
             if st.session_state.get(f"edit_{row['id']}"):
                 with st.form(f"form_edit_{row['id']}"):
+                    st.caption(f"Année : **{int(row['annee'])}**")
+
+                    new_groupe = st.text_input(
+                        "Groupe de compte",
+                        value=row.get("groupe_compte", "")
+                    )
                     new_lib = st.text_input(
-                        "Libellé",
+                        "Libellé du groupe",
                         value=row.get("libelle_groupe", "")
                     )
                     new_budget = st.number_input(
@@ -107,18 +130,32 @@ def budget_ui(supabase, annee):
                         step=100.0
                     )
 
-                    save = st.form_submit_button("💾 Enregistrer")
-                    delete = st.form_submit_button("🗑️ Supprimer")
+                    col_save, col_del, col_cancel = st.columns(3)
+                    save = col_save.form_submit_button("💾 Enregistrer")
+                    delete = col_del.form_submit_button("🗑️ Supprimer")
+                    cancel = col_cancel.form_submit_button("❌ Annuler")
 
                     if save:
-                        supabase.table("budgets").update({
-                            "libelle_groupe": new_lib,
-                            "budget": new_budget
-                        }).eq("id", row["id"]).execute()
-                        st.success("Budget modifié")
-                        st.rerun()
+                        if not new_groupe or new_budget <= 0:
+                            st.error("Groupe de compte et montant sont obligatoires.")
+                        else:
+                            supabase.table("budgets").update({
+                                "groupe_compte": new_groupe,
+                                "libelle_groupe": new_lib,
+                                "budget": new_budget,
+                                # on ne touche pas à annee ici
+                            }).eq("id", row["id"]).execute()
+                            st.success("✅ Budget modifié.")
+                            st.rerun()
 
                     if delete:
-                        supabase.table("budgets").delete().eq("id", row["id"]).execute()
-                        st.success("Budget supprimé")
+                        supabase.table("budgets") \
+                            .delete() \
+                            .eq("id", row["id"]) \
+                            .execute()
+                        st.success("🗑️ Budget supprimé.")
                         st.rerun()
+
+                    if cancel:
+                        st.session_state[f"edit_{row['id']}"] = False
+                        st.experimental_rerun()
