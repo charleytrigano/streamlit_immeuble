@@ -1,183 +1,85 @@
 import streamlit as st
 import pandas as pd
 
-# =========================
-# UTIL
-# =========================
+
 def euro(x):
-    try:
-        return f"{float(x):,.2f} €".replace(",", " ").replace(".", ",")
-    except Exception:
+    if pd.isna(x):
         return "0,00 €"
+    return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
 
-# =========================
-# UI BUDGET
-# =========================
 def budget_ui(supabase, annee):
-    st.subheader("💰 Budget")
+    st.header("💰 Budget annuel")
 
     # =========================
-    # CHARGEMENT
+    # CHARGEMENT DONNÉES
     # =========================
-    resp = (
-        supabase
-        .table("budgets")
-        .select("*")
-        .eq("annee", annee)
-        .execute()
-    )
-    df = pd.DataFrame(resp.data or [])
+    budgets = supabase.table("budgets").select("*").eq("annee", annee).execute()
+    depenses = supabase.table("depenses").select("*").eq("annee", annee).execute()
 
-    plan_resp = (
-        supabase
-        .table("plan_comptable")
-        .select("compte_8, groupe_compte, libelle_groupe")
-        .execute()
-    )
-    df_plan = pd.DataFrame(plan_resp.data or [])
+    df_bud = pd.DataFrame(budgets.data or [])
+    df_dep = pd.DataFrame(depenses.data or [])
 
-    if df.empty:
-        st.warning("Aucun budget pour cette année.")
-        df = pd.DataFrame(columns=[
-            "id", "annee", "compte", "budget", "groupe_compte", "libelle_groupe"
-        ])
+    if df_bud.empty:
+        st.warning("Aucun budget défini pour cette année.")
+        return
 
     # =========================
-    # ENRICHISSEMENT
+    # DÉPENSES PAR GROUPE
     # =========================
-    df["compte"] = df["compte"].astype(str)
-    df["budget"] = pd.to_numeric(df["budget"], errors="coerce").fillna(0)
-
-    if not df_plan.empty:
-        df = df.merge(
-            df_plan,
-            left_on="compte",
-            right_on="compte_8",
-            how="left",
-            suffixes=("", "_plan")
+    if not df_dep.empty:
+        dep_group = (
+            df_dep.groupby("groupe_compte", dropna=False)["montant_ttc"]
+            .sum()
+            .reset_index()
+            .rename(columns={"montant_ttc": "realise"})
         )
+    else:
+        dep_group = pd.DataFrame(columns=["groupe_compte", "realise"])
 
-        df["groupe_compte"] = df["groupe_compte"].fillna(df["groupe_compte_plan"])
-        df["libelle_groupe"] = df["libelle_groupe"].fillna(df["libelle_groupe_plan"])
+    # =========================
+    # MERGE BUDGET / RÉALISÉ
+    # =========================
+    df = df_bud.merge(dep_group, on="groupe_compte", how="left")
+    df["realise"] = df["realise"].fillna(0)
+
+    df["ecart"] = df["budget"] - df["realise"]
+    df["ecart_pct"] = df.apply(
+        lambda r: (r["ecart"] / r["budget"] * 100) if r["budget"] else 0,
+        axis=1
+    )
 
     # =========================
     # KPI
     # =========================
     total_budget = df["budget"].sum()
+    total_realise = df["realise"].sum()
+    total_ecart = total_budget - total_realise
+    pct_ecart = (total_ecart / total_budget * 100) if total_budget else 0
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Budget total", euro(total_budget))
-    c2.metric("Nombre de lignes", len(df))
+    c2.metric("Dépenses réalisées", euro(total_realise))
+    c3.metric("Écart", euro(total_ecart))
+    c4.metric("Écart %", f"{pct_ecart:.1f} %")
 
     # =========================
-    # TABLEAU PAR GROUPE
+    # TABLEAU
     # =========================
-    st.markdown("### 📊 Budget par groupe de comptes")
+    st.subheader("Détail par groupe de comptes")
 
-    grp = (
-        df
-        .groupby(["groupe_compte", "libelle_groupe"], as_index=False)
-        .agg(budget=("budget", "sum"))
-        .sort_values("groupe_compte")
-    )
+    df_display = df[[
+        "groupe_compte",
+        "libelle_groupe",
+        "budget",
+        "realise",
+        "ecart",
+        "ecart_pct"
+    ]].copy()
 
-    st.dataframe(
-        grp.rename(columns={
-            "groupe_compte": "Groupe",
-            "libelle_groupe": "Libellé groupe",
-            "budget": "Budget (€)"
-        }),
-        use_container_width=True
-    )
+    df_display["budget"] = df_display["budget"].apply(euro)
+    df_display["realise"] = df_display["realise"].apply(euro)
+    df_display["ecart"] = df_display["ecart"].apply(euro)
+    df_display["ecart_pct"] = df_display["ecart_pct"].map(lambda x: f"{x:.1f} %")
 
-    # =========================
-    # DÉTAIL
-    # =========================
-    st.markdown("### 📋 Détail du budget")
-
-    st.dataframe(
-        df[[
-            "compte",
-            "groupe_compte",
-            "libelle_groupe",
-            "budget"
-        ]].sort_values("compte"),
-        use_container_width=True
-    )
-
-    # =========================
-    # AJOUT
-    # =========================
-    st.markdown("### ➕ Ajouter une ligne de budget")
-
-    with st.form("add_budget"):
-        b_compte = st.text_input("Compte (8 chiffres)")
-        b_groupe = st.text_input("Groupe de compte")
-        b_libelle = st.text_input("Libellé du groupe")
-        b_montant = st.number_input("Montant du budget", step=100.0)
-
-        submit = st.form_submit_button("Ajouter")
-
-        if submit:
-            supabase.table("budgets").insert({
-                "annee": annee,
-                "compte": b_compte,
-                "groupe_compte": b_groupe,
-                "libelle_groupe": b_libelle,
-                "budget": b_montant
-            }).execute()
-
-            st.success("Budget ajouté")
-            st.rerun()
-
-    # =========================
-    # MODIFICATION
-    # =========================
-    st.markdown("### ✏️ Modifier une ligne")
-
-    if not df.empty:
-        choix = {
-            f"{row['compte']} | {euro(row['budget'])}": row["id"]
-            for _, row in df.iterrows()
-        }
-
-        sel = st.selectbox("Sélection", list(choix.keys()))
-        row = df[df["id"] == choix[sel]].iloc[0]
-
-        with st.form("edit_budget"):
-            e_budget = st.number_input(
-                "Montant",
-                value=float(row["budget"]),
-                step=100.0
-            )
-
-            submit_edit = st.form_submit_button("Enregistrer")
-
-            if submit_edit:
-                supabase.table("budgets").update({
-                    "budget": e_budget
-                }).eq("id", row["id"]).execute()
-
-                st.success("Budget modifié")
-                st.rerun()
-
-    # =========================
-    # SUPPRESSION
-    # =========================
-    st.markdown("### 🗑️ Supprimer une ligne")
-
-    if not df.empty:
-        sel_del = st.selectbox(
-            "Ligne à supprimer",
-            list(choix.keys()),
-            key="del_budget"
-        )
-
-        if st.button("Supprimer"):
-            supabase.table("budgets").delete().eq(
-                "id", choix[sel_del]
-            ).execute()
-
-            st.success("Budget supprimé")
-            st.rerun()
+    st.dataframe(df_display, use_container_width=True)
