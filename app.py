@@ -5,6 +5,7 @@ from utils.depenses_ui import depenses_ui
 from utils.budget_ui import budget_ui
 from utils.plan_comptable_ui import plan_comptable_ui
 
+from utils.lots_ui import lots_ui
 
 # =========================
 # Config & connexion Supabase
@@ -34,6 +35,7 @@ def main():
     with tabs[2]:
         plan_comptable_ui(supabase)
 
+        lots_ui(supabase)
 
 if __name__ == "__main__":
     main()
