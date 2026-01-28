@@ -11,8 +11,8 @@ st.set_page_config(
 )
 
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_ANON_KEY"]
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
+supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 # =========================
 # HELPERS
@@ -67,17 +67,17 @@ df_bud_y = df_bud[df_bud["annee"] == annee_sel]
 # =========================
 total_dep = df_dep_y["montant_ttc"].sum()
 
-bud_total = (
-    df_bud_y["montant"].sum()
-    if "montant" in df_bud_y.columns
+budget_total = (
+    df_bud_y["budget"].sum()
+    if "budget" in df_bud_y.columns and not df_bud_y.empty
     else 0
 )
 
-ecart = bud_total - total_dep
+ecart = budget_total - total_dep
 
 c1, c2, c3 = st.columns(3)
 c1.metric("💸 Dépenses réelles", euro(total_dep))
-c2.metric("💰 Budget", euro(bud_total))
+c2.metric("💰 Budget total", euro(budget_total))
 c3.metric("📊 Écart", euro(ecart))
 
 # =========================
@@ -85,7 +85,7 @@ c3.metric("📊 Écart", euro(ecart))
 # =========================
 tab1, tab2, tab3 = st.tabs([
     "📄 État des dépenses",
-    "📚 Plan comptable (verrouillé)",
+    "📚 Plan comptable",
     "💰 Budget"
 ])
 
@@ -93,9 +93,9 @@ tab1, tab2, tab3 = st.tabs([
 # TAB 1 — DEPENSES (LOCKED)
 # =========================
 with tab1:
-    st.subheader("📄 État des dépenses (lecture seule)")
+    st.subheader("📄 État des dépenses (verrouillé)")
 
-    cols_order = [
+    cols = [
         "date",
         "annee",
         "compte",
@@ -107,10 +107,10 @@ with tab1:
         "commentaire"
     ]
 
-    cols_existing = [c for c in cols_order if c in df_dep_y.columns]
+    cols = [c for c in cols if c in df_dep_y.columns]
 
     st.dataframe(
-        df_dep_y[cols_existing].sort_values("date"),
+        df_dep_y[cols].sort_values("date"),
         use_container_width=True
     )
 
@@ -121,8 +121,8 @@ with tab2:
     st.subheader("📚 Plan comptable (verrouillé)")
 
     st.info(
-        "Le plan comptable est verrouillé.\n\n"
-        "Les comptes invalides (EMPTY / groupe 000) ont été automatiquement supprimés."
+        "Le plan comptable est verrouillé.\n"
+        "Les comptes invalides ont été supprimés automatiquement."
     )
 
     st.dataframe(
@@ -134,46 +134,62 @@ with tab2:
 # TAB 3 — BUDGET (CRUD)
 # =========================
 with tab3:
-    st.subheader("💰 Gestion du budget")
+    st.subheader("💰 Budget par groupe")
 
     st.dataframe(
-        df_bud_y.sort_values("groupe_compte"),
+        df_bud_y[[
+            "groupe_compte",
+            "libelle_groupe",
+            "budget"
+        ]].sort_values("groupe_compte"),
         use_container_width=True
     )
 
+    st.metric(
+        "Total budget",
+        euro(budget_total)
+    )
+
     st.divider()
+
+    # -------- FORM ADD / UPDATE --------
     st.subheader("➕ Ajouter / Modifier un budget")
 
     with st.form("budget_form"):
-        groupe = st.text_input("Groupe de compte (ex: 601)")
-        montant = st.number_input("Montant (€)", min_value=0.0)
-        submitted = st.form_submit_button("Enregistrer")
+        groupe = st.text_input("Groupe de compte (ex : 601)")
+        libelle_grp = st.text_input("Libellé du groupe (ex : Eau)")
+        montant = st.number_input("Budget (€)", min_value=0.0)
 
-        if submitted:
+        submit = st.form_submit_button("Enregistrer")
+
+        if submit:
             supabase.table("budgets").upsert({
                 "annee": annee_sel,
                 "groupe_compte": groupe,
-                "montant": montant
+                "libelle_groupe": libelle_grp,
+                "budget": montant
             }).execute()
 
             st.success("Budget enregistré")
             st.rerun()
 
     st.divider()
+
+    # -------- DELETE --------
     st.subheader("🗑️ Supprimer un budget")
 
-    grp_del = st.selectbox(
-        "Groupe à supprimer",
-        df_bud_y["groupe_compte"].unique()
-        if not df_bud_y.empty else []
-    )
+    if not df_bud_y.empty:
+        grp_del = st.selectbox(
+            "Groupe à supprimer",
+            df_bud_y["groupe_compte"].unique()
+        )
 
-    if st.button("Supprimer"):
-        supabase.table("budgets") \
-            .delete() \
-            .eq("annee", annee_sel) \
-            .eq("groupe_compte", grp_del) \
-            .execute()
+        if st.button("Supprimer"):
+            supabase.table("budgets") \
+                .delete() \
+                .eq("annee", annee_sel) \
+                .eq("groupe_compte", grp_del) \
+                .execute()
 
-        st.success("Budget supprimé")
-        st.rerun()
+            st.success("Budget supprimé")
+            st.rerun()
