@@ -1,125 +1,146 @@
 import streamlit as st
 import pandas as pd
 
-
+# =========================
+# FORMAT €
+# =========================
 def euro(x):
-    if x is None:
+    try:
+        return f"{float(x):,.2f} €".replace(",", " ").replace(".", ",")
+    except Exception:
         return "0,00 €"
-    return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
 
+# =========================
+# UI BUDGET
+# =========================
 def budget_ui(supabase, annee):
-    st.header("💰 Budget annuel")
+    st.header("💰 Budget")
 
-    # =========================
-    # LECTURE DES DONNÉES
-    # =========================
-    res = (
+    # ======================================================
+    # CHARGEMENT DES DONNÉES
+    # ======================================================
+    bud_res = (
         supabase
         .table("budgets")
         .select("*")
         .eq("annee", annee)
-        .order("groupe_compte")
         .execute()
     )
+    df_bud = pd.DataFrame(bud_res.data)
 
-    data = res.data or []
+    plan_res = (
+        supabase
+        .table("plan_comptable")
+        .select("groupe_compte, libelle_groupe")
+        .execute()
+    )
+    df_plan = pd.DataFrame(plan_res.data)
 
-    st.caption(f"📌 Budgets trouvés : {len(data)} lignes")
+    if not df_plan.empty:
+        df_plan = df_plan.drop_duplicates("groupe_compte")
 
-    if not data:
-        st.warning("Aucun budget défini pour cette année.")
+    # ======================================================
+    # AJOUT BUDGET
+    # ======================================================
+    st.subheader("➕ Ajouter un budget")
+
+    groupes = sorted(df_plan["groupe_compte"].dropna().unique().tolist())
+
+    with st.form("add_budget"):
+        col1, col2, col3 = st.columns(3)
+
+        groupe = col1.selectbox("Groupe de compte", options=groupes)
+
+        libelle = ""
+        if not df_plan.empty and groupe:
+            lib = df_plan[df_plan["groupe_compte"] == groupe]["libelle_groupe"]
+            libelle = lib.iloc[0] if not lib.empty else ""
+
+        col2.text_input(
+            "Libellé groupe",
+            value=libelle,
+            disabled=True
+        )
+
+        montant = col3.number_input(
+            "Budget annuel (€)",
+            min_value=0.0,
+            step=100.0
+        )
+
+        submit = st.form_submit_button("➕ Ajouter")
+
+        if submit:
+            supabase.table("budgets").insert({
+                "annee": annee,
+                "groupe_compte": groupe,
+                "libelle_groupe": libelle,
+                "budget": montant
+            }).execute()
+
+            st.success("Budget ajouté")
+            st.rerun()
+
+    # ======================================================
+    # TABLEAU BUDGET
+    # ======================================================
+    st.subheader(f"📊 Budget {annee}")
+
+    if df_bud.empty:
+        st.info("Aucun budget enregistré pour cette année.")
         return
 
-    df = pd.DataFrame(data)
+    df_bud = df_bud.sort_values("groupe_compte")
 
-    # =========================
-    # KPI
-    # =========================
-    total_budget = df["budget"].sum()
+    total_budget = df_bud["budget"].fillna(0).sum()
 
-    c1, c2 = st.columns(2)
-    c1.metric("Budget total", euro(total_budget))
-    c2.metric("Nombre de groupes", len(df))
+    st.metric("💰 Budget total", euro(total_budget))
 
-    st.divider()
+    # ======================================================
+    # LISTE / MODIFICATION / SUPPRESSION
+    # ======================================================
+    for _, row in df_bud.iterrows():
+        with st.expander(
+            f"{row['groupe_compte']} — {row.get('libelle_groupe', '')} "
+            f"({euro(row['budget'])})"
+        ):
 
-    # =========================
-    # TABLEAU
-    # =========================
-    st.subheader("📊 Budget par groupe")
+            budget_val = row["budget"] if row["budget"] is not None else 0.0
 
-    # Init session state suppression
-    if "confirm_delete_budget" not in st.session_state:
-        st.session_state.confirm_delete_budget = None
+            col1, col2, col3 = st.columns([2, 2, 1])
 
-    for _, row in df.iterrows():
-        col1, col2, col3, col4 = st.columns([2, 4, 2, 2])
-
-        col1.markdown(f"**{row['groupe_compte']}**")
-        col2.markdown(row.get("libelle_groupe", "—"))
-        col3.markdown(euro(row["budget"]))
-
-        with col4:
-            b1, b2 = st.columns(2)
-
-            # =========================
-            # MODIFIER
-            # =========================
-            if b1.button("✏️", key=f"edit_{row['id']}"):
+            # -------- MODIFIER --------
+            if col1.button("✏️ Modifier", key=f"edit_{row['id']}"):
                 st.session_state[f"edit_{row['id']}"] = True
 
-            # =========================
-            # SUPPRIMER (ÉTAPE 1)
-            # =========================
-            if b2.button("🗑️", key=f"ask_delete_{row['id']}"):
-                st.session_state.confirm_delete_budget = row["id"]
+            # -------- SUPPRIMER --------
+            if col2.button("🗑️ Supprimer", key=f"del_{row['id']}"):
+                supabase.table("budgets").delete().eq("id", row["id"]).execute()
+                st.warning("Budget supprimé")
+                st.rerun()
 
-        # =========================
-        # FORMULAIRE MODIFICATION
-        # =========================
-        if st.session_state.get(f"edit_{row['id']}"):
-            with st.form(f"form_edit_{row['id']}"):
+            # -------- FORM EDIT --------
+            if st.session_state.get(f"edit_{row['id']}"):
                 new_budget = st.number_input(
-                    "Montant du budget (€)",
+                    "Nouveau budget (€)",
                     min_value=0.0,
                     step=100.0,
-                    value=float(row["budget"])
+                    value=float(budget_val),
+                    key=f"nb_{row['id']}"
                 )
 
                 col_ok, col_cancel = st.columns(2)
-                save = col_ok.form_submit_button("💾 Enregistrer")
-                cancel = col_cancel.form_submit_button("❌ Annuler")
 
-                if save:
+                if col_ok.button("💾 Enregistrer", key=f"save_{row['id']}"):
                     supabase.table("budgets").update({
                         "budget": new_budget
                     }).eq("id", row["id"]).execute()
 
                     st.success("Budget mis à jour")
-                    st.session_state.pop(f"edit_{row['id']}")
+                    st.session_state.pop(f"edit_{row['id']}", None)
                     st.rerun()
 
-                if cancel:
-                    st.session_state.pop(f"edit_{row['id']}")
+                if col_cancel.button("❌ Annuler", key=f"cancel_{row['id']}"):
+                    st.session_state.pop(f"edit_{row['id']}", None)
                     st.rerun()
-
-        # =========================
-        # CONFIRMATION SUPPRESSION
-        # =========================
-        if st.session_state.confirm_delete_budget == row["id"]:
-            st.error(
-                f"⚠️ Supprimer définitivement le budget du groupe "
-                f"**{row['groupe_compte']}** ?"
-            )
-
-            cdel1, cdel2 = st.columns(2)
-            if cdel1.button("❌ Oui, supprimer", key=f"confirm_del_{row['id']}"):
-                supabase.table("budgets").delete().eq("id", row["id"]).execute()
-                st.session_state.confirm_delete_budget = None
-                st.success("Budget supprimé")
-                st.rerun()
-
-            if cdel2.button("↩️ Annuler", key=f"cancel_del_{row['id']}"):
-                st.session_state.confirm_delete_budget = None
-                st.rerun()
