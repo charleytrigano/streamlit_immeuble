@@ -84,6 +84,36 @@ with tabs[0]:
         use_container_width=True
     )
 
+
+st.subheader("➕ Ajouter une dépense")
+
+with st.form("add_depense"):
+    d1, d2, d3 = st.columns(3)
+
+    date = d1.date_input("Date")
+    compte = d2.selectbox("Compte", df_plan["compte_8"].sort_values())
+    fournisseur = d3.text_input("Fournisseur")
+
+    poste = st.text_input("Libellé / Poste")
+    montant = st.number_input("Montant TTC", min_value=0.0)
+    commentaire = st.text_area("Commentaire")
+
+    submit = st.form_submit_button("Enregistrer")
+
+    if submit:
+        supabase.table("depenses").insert({
+            "annee": annee,
+            "date": str(date),
+            "compte": compte,
+            "poste": poste,
+            "fournisseur": fournisseur,
+            "montant_ttc": montant,
+            "commentaire": commentaire
+        }).execute()
+
+        st.success("Dépense ajoutée")
+        st.experimental_rerun()
+
 # ======================
 # PLAN COMPTABLE (VERROUILLÉ)
 # ======================
