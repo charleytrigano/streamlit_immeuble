@@ -37,7 +37,7 @@ def main():
     if page == "📄 État des dépenses":
         depenses_ui(supabase)
 
-    elif page == "💰 Budget":
+    elif page == "💰 Budgets":
         budget_ui(supabase)
 
     elif page == "📊 Budget vs Réel":
