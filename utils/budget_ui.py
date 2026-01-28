@@ -12,7 +12,7 @@ def budget_ui(supabase, annee):
     st.header("💰 Budget annuel")
 
     # =========================
-    # CHARGEMENT DES BUDGETS
+    # LECTURE DES DONNÉES
     # =========================
     res = (
         supabase
@@ -45,9 +45,13 @@ def budget_ui(supabase, annee):
     st.divider()
 
     # =========================
-    # TABLEAU PAR GROUPE
+    # TABLEAU
     # =========================
     st.subheader("📊 Budget par groupe")
+
+    # Init session state suppression
+    if "confirm_delete_budget" not in st.session_state:
+        st.session_state.confirm_delete_budget = None
 
     for _, row in df.iterrows():
         col1, col2, col3, col4 = st.columns([2, 4, 2, 2])
@@ -56,39 +60,66 @@ def budget_ui(supabase, annee):
         col2.markdown(row.get("libelle_groupe", "—"))
         col3.markdown(euro(row["budget"]))
 
-        # =========================
-        # ACTIONS
-        # =========================
         with col4:
-            b_mod, b_del = st.columns(2)
+            b1, b2 = st.columns(2)
 
-            # -------- MODIFIER --------
-            if b_mod.button("✏️", key=f"edit_{row['id']}"):
-                with st.modal("Modifier le budget"):
-                    new_budget = st.number_input(
-                        "Montant du budget (€)",
-                        min_value=0.0,
-                        step=100.0,
-                        value=float(row["budget"])
-                    )
+            # =========================
+            # MODIFIER
+            # =========================
+            if b1.button("✏️", key=f"edit_{row['id']}"):
+                st.session_state[f"edit_{row['id']}"] = True
 
-                    if st.button("💾 Enregistrer"):
-                        supabase.table("budgets").update({
-                            "budget": new_budget
-                        }).eq("id", row["id"]).execute()
+            # =========================
+            # SUPPRIMER (ÉTAPE 1)
+            # =========================
+            if b2.button("🗑️", key=f"ask_delete_{row['id']}"):
+                st.session_state.confirm_delete_budget = row["id"]
 
-                        st.success("Budget mis à jour")
-                        st.rerun()
+        # =========================
+        # FORMULAIRE MODIFICATION
+        # =========================
+        if st.session_state.get(f"edit_{row['id']}"):
+            with st.form(f"form_edit_{row['id']}"):
+                new_budget = st.number_input(
+                    "Montant du budget (€)",
+                    min_value=0.0,
+                    step=100.0,
+                    value=float(row["budget"])
+                )
 
-            # -------- SUPPRIMER --------
-            if b_del.button("🗑️", key=f"delete_{row['id']}"):
-                with st.modal("⚠️ Confirmation de suppression"):
-                    st.error(
-                        f"Supprimer le budget du groupe **{row['groupe_compte']}** ?\n\n"
-                        "Cette action est définitive."
-                    )
+                col_ok, col_cancel = st.columns(2)
+                save = col_ok.form_submit_button("💾 Enregistrer")
+                cancel = col_cancel.form_submit_button("❌ Annuler")
 
-                    if st.button("❌ Supprimer définitivement"):
-                        supabase.table("budgets").delete().eq("id", row["id"]).execute()
-                        st.success("Budget supprimé")
-                        st.rerun()
+                if save:
+                    supabase.table("budgets").update({
+                        "budget": new_budget
+                    }).eq("id", row["id"]).execute()
+
+                    st.success("Budget mis à jour")
+                    st.session_state.pop(f"edit_{row['id']}")
+                    st.rerun()
+
+                if cancel:
+                    st.session_state.pop(f"edit_{row['id']}")
+                    st.rerun()
+
+        # =========================
+        # CONFIRMATION SUPPRESSION
+        # =========================
+        if st.session_state.confirm_delete_budget == row["id"]:
+            st.error(
+                f"⚠️ Supprimer définitivement le budget du groupe "
+                f"**{row['groupe_compte']}** ?"
+            )
+
+            cdel1, cdel2 = st.columns(2)
+            if cdel1.button("❌ Oui, supprimer", key=f"confirm_del_{row['id']}"):
+                supabase.table("budgets").delete().eq("id", row["id"]).execute()
+                st.session_state.confirm_delete_budget = None
+                st.success("Budget supprimé")
+                st.rerun()
+
+            if cdel2.button("↩️ Annuler", key=f"cancel_del_{row['id']}"):
+                st.session_state.confirm_delete_budget = None
+                st.rerun()
