@@ -11,14 +11,33 @@ def euro(x):
 def budget_ui(supabase, annee):
     st.header("💰 Budget annuel")
 
+    # ⚠️ cast année en STRING pour compatibilité Supabase
+    annee_str = str(annee)
+
     # =========================
     # CHARGEMENT DONNÉES
     # =========================
-    budgets = supabase.table("budgets").select("*").eq("annee", annee).execute()
-    depenses = supabase.table("depenses").select("*").eq("annee", annee).execute()
+    budgets = (
+        supabase
+        .table("budgets")
+        .select("*")
+        .eq("annee", annee_str)
+        .execute()
+    )
+
+    depenses = (
+        supabase
+        .table("depenses")
+        .select("*")
+        .eq("annee", annee_str)
+        .execute()
+    )
 
     df_bud = pd.DataFrame(budgets.data or [])
     df_dep = pd.DataFrame(depenses.data or [])
+
+    # DEBUG VISUEL (TEMPORAIRE)
+    st.caption(f"📌 Budgets trouvés : {len(df_bud)} lignes")
 
     if df_bud.empty:
         st.warning("Aucun budget défini pour cette année.")
@@ -29,7 +48,8 @@ def budget_ui(supabase, annee):
     # =========================
     if not df_dep.empty:
         dep_group = (
-            df_dep.groupby("groupe_compte", dropna=False)["montant_ttc"]
+            df_dep
+            .groupby("groupe_compte", dropna=False)["montant_ttc"]
             .sum()
             .reset_index()
             .rename(columns={"montant_ttc": "realise"})
@@ -38,7 +58,7 @@ def budget_ui(supabase, annee):
         dep_group = pd.DataFrame(columns=["groupe_compte", "realise"])
 
     # =========================
-    # MERGE BUDGET / RÉALISÉ
+    # MERGE
     # =========================
     df = df_bud.merge(dep_group, on="groupe_compte", how="left")
     df["realise"] = df["realise"].fillna(0)
