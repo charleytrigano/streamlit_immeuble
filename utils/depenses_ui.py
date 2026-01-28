@@ -1,172 +1,123 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
 
 
 def depenses_ui(supabase):
-    st.title("📄 État des dépenses")
+    st.header("📄 État des dépenses")
 
-    # =============================
-    # CHARGEMENT
-    # =============================
-    try:
-        res = (
-            supabase
-            .table("depenses")
-            .select("*")
-            .order("date", desc=True)
-            .execute()
-        )
-        df = pd.DataFrame(res.data or [])
-    except Exception as e:
-        st.error("Erreur de chargement des dépenses")
-        st.exception(e)
-        return
+    # ======================
+    # Chargement des données
+    # ======================
+    res = (
+        supabase.table("depenses")
+        .select("*")
+        .execute()
+    )
+
+    df = pd.DataFrame(res.data or [])
 
     if df.empty:
-        st.warning("Aucune dépense trouvée")
+        st.warning("Aucune dépense")
         return
 
-    # =============================
-    # NORMALISATION
-    # =============================
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    # ======================
+    # Filtres (SIDEBAR)
+    # ======================
+    st.sidebar.subheader("Filtres dépenses")
 
-    # =============================
+    annee = st.sidebar.selectbox(
+        "Année",
+        sorted(df["annee"].dropna().unique())
+    )
+
+    type_dep = st.sidebar.multiselect(
+        "Type",
+        sorted(df["type"].dropna().unique())
+    )
+
+    df = df[df["annee"] == annee]
+
+    if type_dep:
+        df = df[df["type"].isin(type_dep)]
+
+    # ======================
+    # Budget (par année)
+    # ======================
+    bud = (
+        supabase.table("budgets")
+        .select("budget")
+        .eq("annee", annee)
+        .execute()
+    )
+
+    df_bud = pd.DataFrame(bud.data or [])
+    budget_total = df_bud["budget"].sum() if not df_bud.empty else 0
+
+    # ======================
     # KPI
-    # =============================
-    total = df["montant_ttc"].sum()
-    c1, c2 = st.columns(2)
-    c1.metric("Total dépenses TTC", f"{total:,.2f} €".replace(",", " "))
-    c2.metric("Nombre de lignes", len(df))
+    # ======================
+    total_dep = df["montant_ttc"].sum()
+    ecart = budget_total - total_dep
+    pct_budget = (total_dep / budget_total * 100) if budget_total else 0
+    pct_ecart = (ecart / budget_total * 100) if budget_total else 0
 
-    st.divider()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total dépenses", f"{total_dep:,.2f} €")
+    c2.metric("Budget", f"{budget_total:,.2f} €")
+    c3.metric("Écart", f"{ecart:,.2f} €")
+    c4.metric("% budget consommé", f"{pct_budget:.1f} %")
 
-    # =============================
-    # TABLEAU
-    # =============================
-    colonnes = [
-        "depense_id",
-        "annee",
-        "compte",
-        "poste",
-        "fournisseur",
-        "date",
-        "montant_ttc",
-        "type",
-        "commentaire"
-    ]
-    colonnes = [c for c in colonnes if c in df.columns]
-
+    # ======================
+    # Tableau
+    # ======================
     st.dataframe(
-        df[colonnes].sort_values("date", ascending=False),
+        df[
+            [
+                "depense_id",
+                "date",
+                "compte",
+                "poste",
+                "fournisseur",
+                "montant_ttc",
+                "type",
+                "commentaire",
+            ]
+        ].sort_values("date"),
         use_container_width=True
     )
 
-    st.divider()
+    # ======================
+    # CRUD
+    # ======================
+    st.subheader("➕ Ajouter une dépense")
 
-    # =============================
-    # MODE
-    # =============================
-    mode = st.radio(
-        "Action",
-        ["➕ Ajouter", "✏️ Modifier", "❌ Supprimer"],
-        horizontal=True
-    )
+    with st.form("add_depense"):
+        col1, col2 = st.columns(2)
 
-    # =============================
-    # AJOUT
-    # =============================
-    if mode == "➕ Ajouter":
-        st.subheader("Ajouter une dépense")
-
-        with st.form("add_depense"):
-            annee = st.number_input("Année", value=date.today().year)
-            compte = st.text_input("Compte")
-            poste = st.text_input("Poste")
+        with col1:
+            date = st.date_input("Date")
             fournisseur = st.text_input("Fournisseur")
-            d = st.date_input("Date", value=date.today())
-            montant = st.number_input("Montant TTC", step=0.01)
-            type_dep = st.text_input("Type (Charge, Assurance, Agios, etc.)")
+            compte = st.text_input("Compte")
+            montant = st.number_input("Montant TTC", min_value=0.0)
+
+        with col2:
+            poste = st.text_input("Poste")
+            type_dep = st.selectbox("Type", ["Charge", "Avoir", "Remboursement"])
             commentaire = st.text_area("Commentaire")
 
-            submit = st.form_submit_button("Ajouter")
+        submit = st.form_submit_button("Ajouter")
 
         if submit:
             supabase.table("depenses").insert({
                 "annee": annee,
+                "date": str(date),
+                "fournisseur": fournisseur,
                 "compte": compte,
                 "poste": poste,
-                "fournisseur": fournisseur,
-                "date": d.isoformat(),
                 "montant_ttc": montant,
                 "type": type_dep,
                 "commentaire": commentaire
             }).execute()
 
             st.success("Dépense ajoutée")
-            st.experimental_rerun()
-
-    # =============================
-    # MODIFICATION
-    # =============================
-    if mode == "✏️ Modifier":
-        st.subheader("Modifier une dépense")
-
-        depense_id = st.selectbox(
-            "Sélectionner une dépense",
-            df["depense_id"],
-            format_func=lambda x: f"ID {x}"
-        )
-
-        dep = df[df["depense_id"] == depense_id].iloc[0]
-
-        with st.form("edit_depense"):
-            annee = st.number_input("Année", value=int(dep["annee"]))
-            compte = st.text_input("Compte", dep["compte"])
-            poste = st.text_input("Poste", dep["poste"])
-            fournisseur = st.text_input("Fournisseur", dep["fournisseur"])
-            d = st.date_input("Date", dep["date"].date() if pd.notnull(dep["date"]) else date.today())
-            montant = st.number_input("Montant TTC", value=float(dep["montant_ttc"]), step=0.01)
-            type_dep = st.text_input("Type", dep["type"])
-            commentaire = st.text_area("Commentaire", dep.get("commentaire", ""))
-
-            submit = st.form_submit_button("Enregistrer")
-
-        if submit:
-            supabase.table("depenses").update({
-                "annee": annee,
-                "compte": compte,
-                "poste": poste,
-                "fournisseur": fournisseur,
-                "date": d.isoformat(),
-                "montant_ttc": montant,
-                "type": type_dep,
-                "commentaire": commentaire
-            }).eq("depense_id", depense_id).execute()
-
-            st.success("Dépense modifiée")
-            st.experimental_rerun()
-
-    # =============================
-    # SUPPRESSION
-    # =============================
-    if mode == "❌ Supprimer":
-        st.subheader("Supprimer une dépense")
-
-        depense_id = st.selectbox(
-            "Sélectionner une dépense à supprimer",
-            df["depense_id"]
-        )
-
-        st.warning("⚠️ Cette action est irréversible")
-
-        if st.button("Supprimer définitivement"):
-            supabase.table("depenses") \
-                .delete() \
-                .eq("depense_id", depense_id) \
-                .execute()
-
-            st.success("Dépense supprimée")
             st.experimental_rerun()
