@@ -16,7 +16,7 @@ st.title("🏢 Pilotage de l’immeuble")
 # SUPABASE
 # =========================
 SUPABASE_URL = st.secrets["supabase"]["url"]
-SUPABASE_KEY = st.secrets["supabase"]["key"]
+SUPABASE_Anon_KEY = st.secrets["supabase"]["key"]
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
