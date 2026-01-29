@@ -55,8 +55,8 @@ def main():
     # =========================
     tab_dep, tab_bud, tab_bvr, tab_appels, tab_repart, tab_plan, tab_lots = st.tabs([
         "📄 Dépenses",
-        "💰 Budget",
-        "📊 Budget vs Réel",
+        "💰 montant",
+        "📊 montant vs Réel",
         "📢 Appels de fonds",
         "🏢 Répartition par lot",
         "📘 Plan comptable",
@@ -75,25 +75,25 @@ def main():
             st.exception(e)
 
     # =========================
-    # BUDGET
+    # montant
     # =========================
     with tab_bud:
         try:
-            from utils.budget_ui import budget_ui
-            budget_ui(supabase, annee)
+            from utils.montant_ui import montant_ui
+            montant_ui(supabase, annee)
         except Exception as e:
-            st.error("❌ Erreur module Budget")
+            st.error("❌ Erreur module montant")
             st.exception(e)
 
     # =========================
-    # BUDGET VS RÉEL
+    # montant VS RÉEL
     # =========================
     with tab_bvr:
         try:
-            from utils.budget_vs_reel_ui import budget_vs_reel_ui
-            budget_vs_reel_ui(supabase, annee)
+            from utils.montant_vs_reel_ui import montant_vs_reel_ui
+            montant_vs_reel_ui(supabase, annee)
         except Exception as e:
-            st.error("❌ Erreur module Budget vs Réel")
+            st.error("❌ Erreur module montant vs Réel")
             st.exception(e)
 
     # =========================
