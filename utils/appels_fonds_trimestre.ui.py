@@ -1,125 +1,81 @@
-
 import streamlit as st
 import pandas as pd
 
-BASE_TANTIEMES = 10_000
-TRIMESTRES = ["T1", "T2", "T3", "T4"]
+
+def euro(x):
+    return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
 
 def appels_fonds_trimestre_ui(supabase, annee):
-    st.header("📢 Appels de fonds par trimestre")
+    st.header("📢 Appels de fonds – par trimestre")
 
     # =========================
-    # BUDGET
+    # CHARGEMENT BUDGET
     # =========================
-    bud_res = (
+    bud_resp = (
         supabase
         .table("budgets")
-        .select("budget")
+        .select("groupe_compte, libelle_groupe, budget")
         .eq("annee", annee)
         .execute()
     )
 
-    if not bud_res.data:
-        st.warning("Aucun budget trouvé pour cette année.")
-        return
+    df_bud = pd.DataFrame(bud_resp.data)
 
-    df_budget = pd.DataFrame(bud_res.data)
-    budget_total = float(df_budget["budget"].sum())
-
-    loi_alur = round(budget_total * 0.05, 2)
-    total_annuel = budget_total + loi_alur
-    total_trimestre = round(total_annuel / 4, 2)
-
-    # =========================
-    # LOTS
-    # =========================
-    lots_res = (
-        supabase
-        .table("lots")
-        .select(
-            "lot_id, lot, tantiemes, proprietaire, locataire"
-        )
-        .execute()
-    )
-
-    if not lots_res.data:
-        st.warning("Aucun lot trouvé.")
-        return
-
-    df_lots = pd.DataFrame(lots_res.data)
-
-    total_tantiemes = df_lots["tantiemes"].sum()
-    if total_tantiemes == 0:
-        st.error("Total tantièmes = 0")
+    if df_bud.empty:
+        st.warning("Aucun budget enregistré pour cette année.")
         return
 
     # =========================
-    # CALCUL PAR LOT
+    # TOTAL BUDGET
     # =========================
-    df_lots["appel_annuel"] = (
-        total_annuel * df_lots["tantiemes"] / total_tantiemes
-    ).round(2)
+    budget_total = df_bud["budget"].sum()
 
-    df_lots["appel_trimestriel"] = (
-        df_lots["appel_annuel"] / 4
-    ).round(2)
+    # =========================
+    # CALCUL TRIMESTRES
+    # =========================
+    trimestres = pd.DataFrame({
+        "Trimestre": ["T1", "T2", "T3", "T4"],
+        "Montant": [budget_total / 4] * 4
+    })
+
+    # =========================
+    # LOI ALUR (5 %)
+    # =========================
+    loi_alur = budget_total * 0.05
 
     # =========================
     # KPI
     # =========================
-    c1, c2, c3, c4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
 
-    c1.metric("Budget", f"{budget_total:,.2f} €")
-    c2.metric("Loi ALUR (5 %)", f"{loi_alur:,.2f} €")
-    c3.metric("Total annuel", f"{total_annuel:,.2f} €")
-    c4.metric("Par trimestre", f"{total_trimestre:,.2f} €")
+    col1.metric("Budget annuel", euro(budget_total))
+    col2.metric("Appel trimestriel", euro(budget_total / 4))
+    col3.metric("Fonds Loi ALUR (5 %)", euro(loi_alur))
 
     st.divider()
 
     # =========================
-    # TABLEAU PAR LOT
+    # TABLEAU APPELS
     # =========================
-    st.subheader("📋 Appels trimestriels par lot")
-
-    df_aff = df_lots[
-        [
-            "lot",
-            "tantiemes",
-            "appel_trimestriel",
-            "proprietaire",
-            "locataire"
-        ]
-    ].sort_values("lot")
+    st.subheader("📅 Appels de fonds par trimestre")
 
     st.dataframe(
-        df_aff.style.format({
-            "appel_trimestriel": "{:,.2f} €"
-        }),
+        trimestres.assign(
+            **{"Montant (€)": trimestres["Montant"].apply(euro)}
+        )[["Trimestre", "Montant (€)"]],
         use_container_width=True
     )
 
     # =========================
-    # TABLEAU DÉTAILLÉ LOT × TRIMESTRE
+    # LIGNE LOI ALUR
     # =========================
-    st.subheader("📆 Détail par trimestre")
-
-    rows = []
-    for _, r in df_lots.iterrows():
-        for t in TRIMESTRES:
-            rows.append({
-                "Lot": r["lot"],
-                "Trimestre": t,
-                "Montant": r["appel_trimestriel"]
-            })
-
-    df_trim = pd.DataFrame(rows)
+    st.subheader("⚖️ Fonds Loi ALUR")
 
     st.dataframe(
-        df_trim.style.format({
-            "Montant": "{:,.2f} €"
-        }),
+        pd.DataFrame([{
+            "Libellé": "Fonds Loi ALUR (5 %)",
+            "Montant (€)": euro(loi_alur)
+        }]),
         use_container_width=True
     )
-
-    st.success("Appels de fonds trimestriels calculés correctement ✅")
