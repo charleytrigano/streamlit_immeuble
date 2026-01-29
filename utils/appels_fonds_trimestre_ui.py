@@ -12,7 +12,7 @@ def appels_fonds_trimestre_ui(supabase, annee):
         res = (
             supabase
             .table("budgets")
-            .select("montant_budget")  # ⚠️ NOM CORRECT
+            .select("budget")
             .eq("annee", annee)
             .execute()
         )
@@ -27,14 +27,14 @@ def appels_fonds_trimestre_ui(supabase, annee):
 
     df_budget = pd.DataFrame(res.data)
 
-    if "montant_budget" not in df_budget.columns:
-        st.error("Colonne 'montant_budget' introuvable dans la table budgets.")
+    if "budget" not in df_budget.columns:
+        st.error("Colonne 'budget' introuvable dans la table budgets.")
         st.stop()
 
     # =========================
     # CALCULS
     # =========================
-    budget_annuel = df_budget["montant_budget"].sum()
+    budget_annuel = df_budget["budget"].sum()
 
     appel_trimestriel = budget_annuel / 4
     alur_trimestriel = appel_trimestriel * 0.05
@@ -60,7 +60,7 @@ def appels_fonds_trimestre_ui(supabase, annee):
     # =========================
     # AFFICHAGE
     # =========================
-    st.success("Module Appels de fonds par trimestre chargé ✅")
+    st.success("Module Appels de fonds par trimestre chargé correctement ✅")
 
     st.metric(
         "Budget annuel",
