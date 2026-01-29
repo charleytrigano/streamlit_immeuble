@@ -1,108 +1,79 @@
 import streamlit as st
 import pandas as pd
 
+GROUPES_CHARGES = {
+    1: "Charges communes générales",
+    2: "Charges spéciales RDC / sous-sols",
+    3: "Charges spéciales sous-sols",
+    4: "Ascenseurs",
+    5: "Monte-voitures",
+}
+
 
 def plan_comptable_ui(supabase):
-
     st.header("📘 Plan comptable")
 
     # =========================
     # CHARGEMENT
     # =========================
-    resp = supabase.table("plan_comptable").select("*").execute()
-    df = pd.DataFrame(resp.data)
-
-    if df.empty:
-        st.warning("Plan comptable vide")
+    res = supabase.table("plan_comptable").select("*").execute()
+    if not res.data:
+        st.warning("Aucun compte dans le plan comptable.")
         return
 
-    # =========================
-    # NETTOYAGE AUTOMATIQUE
-    # =========================
-    df = df[
-        df["compte_8"].notna() &
-        df["groupe_compte"].notna() &
-        (df["libelle_groupe"].fillna("") != "000")
-    ]
+    df = pd.DataFrame(res.data)
+
+    # Nettoyage
+    df["compte_8"] = df["compte_8"].astype(str)
+    df["groupe_charge"] = pd.to_numeric(df["groupe_charge"], errors="coerce")
 
     # =========================
-    # TABLEAU
+    # AFFICHAGE TABLE
     # =========================
-    st.subheader("📋 Comptes existants")
+    st.subheader("📋 Comptes")
 
-    st.dataframe(
-        df.sort_values(["groupe_compte", "compte_8"]),
-        use_container_width=True
-    )
+    for _, row in df.sort_values(["groupe_compte", "compte_8"]).iterrows():
+        with st.expander(f"{row['compte_8']} — {row.get('libelle', '')}", expanded=False):
+            col1, col2 = st.columns(2)
 
-    # =========================
-    # AJOUT
-    # =========================
-    st.subheader("➕ Ajouter un compte")
+            with col1:
+                st.text_input(
+                    "Compte",
+                    value=row["compte_8"],
+                    disabled=True
+                )
 
-    with st.form("add_compte"):
-        c1, c2 = st.columns(2)
+                st.text_input(
+                    "Libellé",
+                    value=row.get("libelle", ""),
+                    disabled=True
+                )
 
-        with c1:
-            compte_8 = st.text_input("Compte (8 chiffres)")
-            groupe_compte = st.text_input("Groupe (3 chiffres)")
+                st.text_input(
+                    "Groupe comptable",
+                    value=row.get("groupe_compte", ""),
+                    disabled=True
+                )
 
-        with c2:
-            libelle = st.text_input("Libellé compte")
-            libelle_groupe = st.text_input("Libellé groupe")
+            with col2:
+                current_gc = row.get("groupe_charge")
+                current_index = (
+                    list(GROUPES_CHARGES.keys()).index(current_gc)
+                    if current_gc in GROUPES_CHARGES
+                    else 0
+                )
 
-        submit = st.form_submit_button("Ajouter")
+                new_gc = st.selectbox(
+                    "Groupe de charges",
+                    options=list(GROUPES_CHARGES.keys()),
+                    format_func=lambda x: GROUPES_CHARGES[x],
+                    index=current_index,
+                    key=f"gc_{row['compte_8']}"
+                )
 
-        if submit:
-            supabase.table("plan_comptable").insert({
-                "compte_8": compte_8,
-                "libelle": libelle,
-                "groupe_compte": groupe_compte,
-                "libelle_groupe": libelle_groupe,
-            }).execute()
+                if st.button("💾 Enregistrer", key=f"save_{row['compte_8']}"):
+                    supabase.table("plan_comptable").update(
+                        {"groupe_charge": new_gc}
+                    ).eq("compte_8", row["compte_8"]).execute()
 
-            st.success("Compte ajouté")
-            st.rerun()
-
-    # =========================
-    # MODIFICATION
-    # =========================
-    st.subheader("✏️ Modifier un compte")
-
-    compte_sel = st.selectbox(
-        "Compte à modifier",
-        df["compte_8"].tolist()
-    )
-
-    ligne = df[df["compte_8"] == compte_sel].iloc[0]
-
-    with st.form("edit_compte"):
-        libelle_new = st.text_input("Libellé compte", ligne["libelle"])
-        libelle_groupe_new = st.text_input("Libellé groupe", ligne["libelle_groupe"])
-
-        submit_edit = st.form_submit_button("Modifier")
-
-        if submit_edit:
-            supabase.table("plan_comptable").update({
-                "libelle": libelle_new,
-                "libelle_groupe": libelle_groupe_new,
-            }).eq("compte_8", compte_sel).execute()
-
-            st.success("Compte modifié")
-            st.rerun()
-
-    # =========================
-    # SUPPRESSION
-    # =========================
-    st.subheader("🗑 Supprimer un compte")
-
-    compte_del = st.selectbox(
-        "Compte à supprimer",
-        df["compte_8"].tolist(),
-        key="delete_compte"
-    )
-
-    if st.button("Supprimer définitivement"):
-        supabase.table("plan_comptable").delete().eq("compte_8", compte_del).execute()
-        st.success("Compte supprimé")
-        st.rerun()
+                    st.success("Groupe de charges mis à jour")
