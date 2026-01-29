@@ -20,7 +20,7 @@ def get_supabase():
     except KeyError:
         st.error(
             "❌ Supabase mal configuré.\n\n"
-            "Vérifie `.streamlit/secrets.toml` :\n"
+            "Vérifie `.streamlit/secrets.toml` avec :\n\n"
             "SUPABASE_URL\n"
             "SUPABASE_ANON_KEY"
         )
@@ -35,7 +35,7 @@ def main():
     supabase = get_supabase()
 
     # =========================
-    # SIDEBAR – FILTRES
+    # SIDEBAR – FILTRES GLOBAUX
     # =========================
     st.sidebar.title("🔎 Filtres globaux")
 
@@ -53,10 +53,18 @@ def main():
     # =========================
     # ONGLET PRINCIPAL
     # =========================
-    tab_dep, tab_bud, tab_bvr, tab_appels, tab_repart, tab_plan, tab_lots = st.tabs([
+    (
+        tab_dep,
+        tab_bud,
+        tab_bvr,
+        tab_appels,
+        tab_repart,
+        tab_plan,
+        tab_lots
+    ) = st.tabs([
         "📄 Dépenses",
-        "💰 montant",
-        "📊 montant vs Réel",
+        "💰 Budget",
+        "📊 Budget vs Réel",
         "📢 Appels de fonds",
         "🏢 Répartition par lot",
         "📘 Plan comptable",
@@ -71,40 +79,40 @@ def main():
             from utils.depenses_ui import depenses_ui
             depenses_ui(supabase, annee)
         except Exception as e:
-            st.error("❌ Erreur module Dépenses")
+            st.error("❌ Erreur dans le module Dépenses")
             st.exception(e)
 
     # =========================
-    # montant
+    # BUDGET
     # =========================
     with tab_bud:
         try:
-            from utils.montant_ui import montant_ui
-            montant_ui(supabase, annee)
+            from utils.budget_ui import budget_ui
+            budget_ui(supabase, annee)
         except Exception as e:
-            st.error("❌ Erreur module montant")
+            st.error("❌ Erreur dans le module Budget")
             st.exception(e)
 
     # =========================
-    # montant VS RÉEL
+    # BUDGET VS RÉEL
     # =========================
     with tab_bvr:
         try:
-            from utils.montant_vs_reel_ui import montant_vs_reel_ui
-            montant_vs_reel_ui(supabase, annee)
+            from utils.budget_vs_reel_ui import budget_vs_reel_ui
+            budget_vs_reel_ui(supabase, annee)
         except Exception as e:
-            st.error("❌ Erreur module montant vs Réel")
+            st.error("❌ Erreur dans le module Budget vs Réel")
             st.exception(e)
 
     # =========================
-    # APPELS DE FONDS (ALUR)
+    # APPELS DE FONDS (TRIMESTRIEL + LOI ALUR)
     # =========================
     with tab_appels:
         try:
-            from utils.appels_fonds_ui import appels_fonds_ui
-            appels_fonds_ui(supabase, annee)
+            from utils.appels_fonds_trimestre_ui import appels_fonds_trimestre_ui
+            appels_fonds_trimestre_ui(supabase, annee)
         except Exception as e:
-            st.error("❌ Erreur module Appels de fonds")
+            st.error("❌ Erreur dans le module Appels de fonds")
             st.exception(e)
 
     # =========================
@@ -115,7 +123,7 @@ def main():
             from utils.repartition_lots_ui import repartition_lots_ui
             repartition_lots_ui(supabase, annee)
         except Exception as e:
-            st.error("❌ Erreur module Répartition par lot")
+            st.error("❌ Erreur dans le module Répartition par lot")
             st.exception(e)
 
     # =========================
@@ -126,7 +134,7 @@ def main():
             from utils.plan_comptable_ui import plan_comptable_ui
             plan_comptable_ui(supabase)
         except Exception as e:
-            st.error("❌ Erreur module Plan comptable")
+            st.error("❌ Erreur dans le module Plan comptable")
             st.exception(e)
 
     # =========================
@@ -137,7 +145,7 @@ def main():
             from utils.lots_ui import lots_ui
             lots_ui(supabase)
         except Exception as e:
-            st.error("❌ Erreur module Lots")
+            st.error("❌ Erreur dans le module Lots")
             st.exception(e)
 
 # =========================
