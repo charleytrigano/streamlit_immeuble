@@ -60,7 +60,9 @@ def main():
         "🏢 Répartition par lot",
         "📘 Plan comptable",
         "🏠 Lots"
+        "📢 Appels de fonds"
     ])
+
 
     # =================================================
     # DÉPENSES
