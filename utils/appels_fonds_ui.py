@@ -1,37 +1,12 @@
 import streamlit as st
 import pandas as pd
+from io import BytesIO
 
 
-def euro(x):
-    return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
-
-
-def appels_fonds_ui(supabase, annee):
-    st.header("💸 Appels de fonds")
-
-    # =========================
-    # CHARGEMENT DES DONNÉES
-    # =========================
-    dep = supabase.table("v_depenses_enrichies") \
-        .select("annee, lot_id, montant_ttc") \
-        .eq("annee", annee) \
-        .execute()
-
-    lots = supabase.table("lots") \
-        .select("lot_id, lot, tantiemes") \
-        .execute()
-
-    if not dep.data or not lots.data:
-        st.warning("Aucune donnée disponible.")
-        return
-
-    df_dep = pd.DataFrame(dep.data)
-    df_lots = pd.DataFrame(lots.data)
-
-    # =========================
-    # CALCULS
-    # =========================
-    total_charges = df_dep["montant_ttc"].sum()
+# ======================================================
+# CALCUL DES APPELS DE FONDS
+# ======================================================
+def calcul_appels_fonds(df_lots, total_charges):
     total_tantiemes = df_lots["tantiemes"].sum()
 
     df = df_lots.copy()
@@ -43,19 +18,55 @@ def appels_fonds_ui(supabase, annee):
     df["loi_alur"] = df["charges"] * 0.05
     df["total_appele"] = df["charges"] + df["loi_alur"]
 
-    # =========================
+    return df
+
+
+# ======================================================
+# UI – APPELS DE FONDS
+# ======================================================
+def appels_fonds_ui(supabase, annee):
+    st.header("💸 Appels de fonds")
+
+    # ======================================================
+    # CHARGEMENT DES DONNÉES
+    # ======================================================
+    lots = supabase.table("lots").select(
+        "lot_id, lot, tantiemes"
+    ).execute()
+
+    depenses = supabase.table("depenses").select(
+        "annee, montant_ttc"
+    ).eq("annee", annee).execute()
+
+    if not lots.data:
+        st.warning("Aucun lot trouvé.")
+        return
+
+    if not depenses.data:
+        st.warning("Aucune dépense trouvée pour cette année.")
+        return
+
+    df_lots = pd.DataFrame(lots.data)
+    df_dep = pd.DataFrame(depenses.data)
+
+    total_charges = df_dep["montant_ttc"].sum()
+
+    st.metric(
+        "Total des charges de l’année",
+        f"{total_charges:,.2f} €".replace(",", " ").replace(".", ",")
+    )
+
+    # ======================================================
+    # CALCUL
+    # ======================================================
+    df = calcul_appels_fonds(df_lots, total_charges)
+
+    # ======================================================
     # AFFICHAGE
-    # =========================
-    st.subheader(f"📅 Année {annee}")
+    # ======================================================
+    st.subheader("📊 Répartition des appels de fonds")
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("💰 Charges totales", euro(total_charges))
-    col2.metric("⚖️ Total tantièmes", f"{total_tantiemes:,.0f}")
-    col3.metric("📤 Total appelé", euro(df['total_appele'].sum()))
-
-    st.divider()
-
-    display_df = df[[
+    df_display = df[[
         "lot",
         "tantiemes",
         "charges",
@@ -63,19 +74,41 @@ def appels_fonds_ui(supabase, annee):
         "total_appele"
     ]].copy()
 
-    display_df.columns = [
-        "Lot",
-        "Tantièmes",
-        "Charges",
-        "Loi ALUR (5 %)",
-        "Total appelé"
+    df_display.loc["TOTAL"] = [
+        "TOTAL",
+        df_display["tantiemes"].sum(),
+        df_display["charges"].sum(),
+        df_display["loi_alur"].sum(),
+        df_display["total_appele"].sum(),
     ]
 
-    for col in ["Charges", "Loi ALUR (5 %)", "Total appelé"]:
-        display_df[col] = display_df[col].apply(euro)
-
     st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True
+        df_display.style.format({
+            "charges": "{:,.2f} €".format,
+            "loi_alur": "{:,.2f} €".format,
+            "total_appele": "{:,.2f} €".format,
+        }),
+        use_container_width=True
+    )
+
+    # ======================================================
+    # EXPORT EXCEL
+    # ======================================================
+    st.divider()
+    st.subheader("📥 Export")
+
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df_display.to_excel(
+            writer,
+            index=False,
+            sheet_name="Appels de fonds"
+        )
+
+    st.download_button(
+        label="📥 Télécharger l’appel de fonds (Excel)",
+        data=output.getvalue(),
+        file_name=f"appel_fonds_{annee}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
