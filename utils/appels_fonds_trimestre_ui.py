@@ -1,16 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-BASE_TANTIEMES = 10_000
-TAUX_LOI_ALUR = 0.05
-
-GROUPES_LABELS = {
-    "1": "Charges communes générales",
-    "2": "Charges spéciales RDC / sous-sols",
-    "3": "Charges spéciales sous-sols",
-    "4": "Ascenseurs",
-    "5": "Monte-voiture",
-}
+from utils.appels_fonds_pdf import generate_pdf_appel_fonds
 
 
 def euro(x):
@@ -18,132 +9,133 @@ def euro(x):
 
 
 def appels_fonds_trimestre_ui(supabase, annee):
-    st.header("📢 Appels de fonds – Répartition trimestrielle")
+    st.header("📢 Appels de fonds trimestriels")
+
+    # ======================================================
+    # CHOIX DU TRIMESTRE
+    # ======================================================
+    trimestre = st.selectbox(
+        "Trimestre",
+        options=[1, 2, 3, 4],
+        index=0
+    )
 
     # ======================================================
     # CHARGEMENT DES DONNÉES
     # ======================================================
-    df_bud = pd.DataFrame(
-        supabase.table("budgets")
-        .select("*")
-        .eq("annee", annee)
-        .execute()
-        .data
-    )
+    bud = supabase.table("budgets").select("*").eq("annee", annee).execute().data
+    dep = supabase.table("depenses").select("*").eq("annee", annee).execute().data
+    lots = supabase.table("lots").select("*").execute().data
+    plan = supabase.table("plan_comptable").select("*").execute().data
 
-    df_lots = pd.DataFrame(
-        supabase.table("lots")
-        .select("lot_id, lot, proprietaire, tantiemes")
-        .execute()
-        .data
-    )
-
-    if df_bud.empty:
-        st.warning("Aucun budget enregistré pour cette année.")
+    if not bud or not lots:
+        st.warning("Aucune donnée budget ou lots disponible.")
         return
 
-    if df_lots.empty:
-        st.warning("Aucun lot enregistré.")
-        return
+    df_bud = pd.DataFrame(bud)
+    df_dep = pd.DataFrame(dep)
+    df_lots = pd.DataFrame(lots)
+    df_plan = pd.DataFrame(plan)
 
-    # Sécurisation
+    # ======================================================
+    # BUDGET ANNUEL & TRIMESTRIEL
+    # ======================================================
+    budget_annuel = df_bud["budget"].sum()
+    budget_trimestriel = budget_annuel / 4
+    loi_alur_total = budget_trimestriel * 0.05
+
+    st.metric("Budget annuel", euro(budget_annuel))
+    st.metric("Appel trimestriel (hors ALUR)", euro(budget_trimestriel))
+    st.metric("Loi ALUR (5 %)", euro(loi_alur_total))
+
+    # ======================================================
+    # PRÉPARATION RÉPARTITION PAR LOT
+    # ======================================================
+    # Nettoyage
     df_lots["tantiemes"] = pd.to_numeric(df_lots["tantiemes"], errors="coerce").fillna(0)
-
     total_tantiemes = df_lots["tantiemes"].sum()
+
     if total_tantiemes == 0:
-        st.error("Le total des tantièmes est nul.")
+        st.error("Total tantièmes = 0 → impossible de répartir.")
         return
 
-    # ======================================================
-    # BUDGET ANNUEL PAR GROUPE
-    # ======================================================
-    bud_groupes = (
-        df_bud
-        .groupby(["groupe_compte", "libelle_groupe"], as_index=False)
-        .agg(budget_annuel=("budget", "sum"))
-    )
+    # Quote-part lot
+    df_lots["quote_part"] = df_lots["tantiemes"] / total_tantiemes
+    df_lots["appel_trimestriel"] = df_lots["quote_part"] * budget_trimestriel
+    df_lots["alur"] = df_lots["appel_trimestriel"] * 0.05
+    df_lots["appel_total"] = df_lots["appel_trimestriel"] + df_lots["alur"]
 
     # ======================================================
-    # CALCUL DES APPELS PAR LOT / GROUPE
+    # TABLEAU GLOBAL
     # ======================================================
-    lignes = []
+    st.subheader("📋 Appels de fonds par lot")
 
-    for _, bud in bud_groupes.iterrows():
-        groupe = str(bud["groupe_compte"])
-        budget_annuel = bud["budget_annuel"]
-        budget_trimestre = budget_annuel / 4
-
-        for _, lot in df_lots.iterrows():
-            part = lot["tantiemes"] / total_tantiemes
-            montant = budget_trimestre * part
-
-            lignes.append({
-                "lot_id": lot["lot_id"],
-                "lot": lot["lot"],
-                "proprietaire": lot["proprietaire"],
-                "groupe_charges": GROUPES_LABELS.get(groupe, f"Groupe {groupe}"),
-                "appel_trimestriel": montant
-            })
-
-    df_appels = pd.DataFrame(lignes)
-
-    # ======================================================
-    # TOTAL PAR LOT
-    # ======================================================
-    df_total_lot = (
-        df_appels
-        .groupby(["lot_id", "lot", "proprietaire"], as_index=False)
-        .agg(total_trimestre=("appel_trimestriel", "sum"))
-    )
-
-    # ======================================================
-    # LOI ALUR – 5 %
-    # ======================================================
-    alur_lignes = []
-    for _, row in df_total_lot.iterrows():
-        alur_lignes.append({
-            "lot_id": row["lot_id"],
-            "lot": row["lot"],
-            "proprietaire": row["proprietaire"],
-            "Loi ALUR (5 %)": row["total_trimestre"] * TAUX_LOI_ALUR
-        })
-
-    df_alur = pd.DataFrame(alur_lignes)
-
-    # ======================================================
-    # AFFICHAGE
-    # ======================================================
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric(
-        "Budget annuel",
-        euro(df_bud["budget"].sum())
-    )
-
-    col2.metric(
-        "Appels trimestriels totaux",
-        euro(df_total_lot["total_trimestre"].sum())
-    )
-
-    col3.metric(
-        "Loi ALUR (5 %)",
-        euro(df_alur["Loi ALUR (5 %)"].sum())
-    )
-
-    st.markdown("### 📋 Détail des appels par groupe et par lot")
     st.dataframe(
-        df_appels.sort_values(["lot", "groupe_charges"]),
+        df_lots[[
+            "lot_id",
+            "lot",
+            "proprietaire",
+            "appel_trimestriel",
+            "alur",
+            "appel_total"
+        ]].rename(columns={
+            "lot_id": "Lot ID",
+            "lot": "Lot",
+            "proprietaire": "Propriétaire",
+            "appel_trimestriel": "Appel trimestriel (€)",
+            "alur": "Loi ALUR (€)",
+            "appel_total": "Total à appeler (€)"
+        }).sort_values("Lot"),
         use_container_width=True
     )
 
-    st.markdown("### 🧾 Total des appels par lot (trimestre)")
-    st.dataframe(
-        df_total_lot.sort_values("lot"),
-        use_container_width=True
-    )
+    # ======================================================
+    # PDF PAR PROPRIÉTAIRE
+    # ======================================================
+    st.subheader("📄 PDF par propriétaire")
 
-    st.markdown("### ⚖️ Ligne Loi ALUR (5 %)")
-    st.dataframe(
-        df_alur.sort_values("lot"),
-        use_container_width=True
-    )
+    proprietaires = df_lots["proprietaire"].dropna().unique().tolist()
+
+    for prop in proprietaires:
+        df_p = df_lots[df_lots["proprietaire"] == prop]
+
+        total_prop = df_p["appel_trimestriel"].sum()
+        alur_prop = df_p["alur"].sum()
+
+        # Détail par groupe de charges (basé sur le budget)
+        df_bud_grp = (
+            df_bud
+            .groupby(["groupe_compte", "libelle_groupe"], as_index=False)
+            .agg(budget=("budget", "sum"))
+        )
+        df_bud_grp["trimestre"] = df_bud_grp["budget"] / 4
+        df_bud_grp["part_prop"] = df_bud_grp["trimestre"] * (total_prop / budget_trimestriel)
+
+        lignes_detail = [
+            {
+                "libelle": row["libelle_groupe"],
+                "montant": row["part_prop"]
+            }
+            for _, row in df_bud_grp.iterrows()
+        ]
+
+        col1, col2 = st.columns([3, 1])
+        col1.markdown(f"**{prop}** — {euro(total_prop + alur_prop)}")
+
+        if col2.button("📄 PDF", key=f"pdf_{prop}"):
+            pdf = generate_pdf_appel_fonds(
+                proprietaire=prop,
+                annee=annee,
+                trimestre=trimestre,
+                lignes_detail=lignes_detail,
+                total_trimestre=total_prop,
+                loi_alur=alur_prop
+            )
+
+            st.download_button(
+                label="⬇️ Télécharger le PDF",
+                data=pdf,
+                file_name=f"appel_fonds_{prop}_{annee}_T{trimestre}.pdf",
+                mime="application/pdf",
+                key=f"dl_{prop}"
+            )
