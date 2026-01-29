@@ -1,114 +1,115 @@
 import streamlit as st
 import pandas as pd
-from io import BytesIO
 
 
 # ======================================================
-# CALCUL DES APPELS DE FONDS
+# UI – APPELS DE FONDS PAR GROUPE DE CHARGES
 # ======================================================
-def calcul_appels_fonds(df_lots, total_charges):
-    total_tantiemes = df_lots["tantiemes"].sum()
+def appels_fonds_groupes_ui(supabase, annee):
+    st.header("💸 Appels de fonds par groupe de charges")
 
-    df = df_lots.copy()
-
-    df["charges"] = (
-        df["tantiemes"] / total_tantiemes * total_charges
-    )
-
-    df["loi_alur"] = df["charges"] * 0.05
-    df["total_appele"] = df["charges"] + df["loi_alur"]
-
-    return df
-
-
-# ======================================================
-# UI – APPELS DE FONDS
-# ======================================================
-def appels_fonds_ui(supabase, annee):
-    st.header("💸 Appels de fonds")
-
-    # ======================================================
+    # =========================
     # CHARGEMENT DES DONNÉES
-    # ======================================================
+    # =========================
+    dep = supabase.table("depenses").select(
+        "annee, compte, montant_ttc"
+    ).eq("annee", annee).execute()
+
+    plan = supabase.table("plan_comptable").select(
+        "compte_8, groupe_charges"
+    ).execute()
+
     lots = supabase.table("lots").select(
         "lot_id, lot, tantiemes"
     ).execute()
 
-    depenses = supabase.table("depenses").select(
-        "annee, montant_ttc"
-    ).eq("annee", annee).execute()
-
-    if not lots.data:
-        st.warning("Aucun lot trouvé.")
+    if not dep.data or not plan.data or not lots.data:
+        st.warning("Données insuffisantes pour calculer les appels de fonds.")
         return
 
-    if not depenses.data:
-        st.warning("Aucune dépense trouvée pour cette année.")
-        return
-
+    df_dep = pd.DataFrame(dep.data)
+    df_plan = pd.DataFrame(plan.data)
     df_lots = pd.DataFrame(lots.data)
-    df_dep = pd.DataFrame(depenses.data)
 
-    total_charges = df_dep["montant_ttc"].sum()
+    # =========================
+    # NETTOYAGE
+    # =========================
+    df_dep["compte"] = df_dep["compte"].astype(str)
+    df_plan["compte_8"] = df_plan["compte_8"].astype(str)
+
+    # =========================
+    # DÉPENSES → GROUPE DE CHARGES
+    # =========================
+    df = df_dep.merge(
+        df_plan,
+        left_on="compte",
+        right_on="compte_8",
+        how="left"
+    )
+
+    if df["groupe_charges"].isna().any():
+        st.error("⚠️ Certaines dépenses ne sont pas rattachées à un groupe de charges.")
+        st.dataframe(df[df["groupe_charges"].isna()])
+        return
+
+    # =========================
+    # TOTAL PAR GROUPE DE CHARGES
+    # =========================
+    charges_groupes = (
+        df.groupby("groupe_charges", as_index=False)
+        .agg(charges=("montant_ttc", "sum"))
+    )
+
+    total_charges = charges_groupes["charges"].sum()
 
     st.metric(
-        "Total des charges de l’année",
+        "Total charges",
         f"{total_charges:,.2f} €".replace(",", " ").replace(".", ",")
     )
 
-    # ======================================================
-    # CALCUL
-    # ======================================================
-    df = calcul_appels_fonds(df_lots, total_charges)
+    # =========================
+    # RÉPARTITION PAR LOT
+    # =========================
+    total_tantiemes = df_lots["tantiemes"].sum()
 
-    # ======================================================
+    repartition = []
+
+    for _, lot in df_lots.iterrows():
+        for _, grp in charges_groupes.iterrows():
+            part = grp["charges"] * lot["tantiemes"] / total_tantiemes
+            repartition.append({
+                "lot": lot["lot"],
+                "groupe_charges": grp["groupe_charges"],
+                "charges": part
+            })
+
+    df_rep = pd.DataFrame(repartition)
+
+    # =========================
+    # LOI ALUR
+    # =========================
+    df_rep["loi_alur"] = df_rep["charges"] * 0.05
+    df_rep["total_appele"] = df_rep["charges"] + df_rep["loi_alur"]
+
+    # =========================
     # AFFICHAGE
-    # ======================================================
-    st.subheader("📊 Répartition des appels de fonds")
+    # =========================
+    st.subheader("📊 Appels de fonds par lot et groupe de charges")
 
-    df_display = df[[
-        "lot",
-        "tantiemes",
-        "charges",
-        "loi_alur",
-        "total_appele"
-    ]].copy()
+    pivot = df_rep.pivot_table(
+        index="lot",
+        columns="groupe_charges",
+        values="total_appele",
+        aggfunc="sum"
+    ).fillna(0)
 
-    df_display.loc["TOTAL"] = [
-        "TOTAL",
-        df_display["tantiemes"].sum(),
-        df_display["charges"].sum(),
-        df_display["loi_alur"].sum(),
-        df_display["total_appele"].sum(),
-    ]
+    pivot["TOTAL LOT"] = pivot.sum(axis=1)
+
+    pivot.loc["TOTAL GROUPE"] = pivot.sum()
 
     st.dataframe(
-        df_display.style.format({
-            "charges": "{:,.2f} €".format,
-            "loi_alur": "{:,.2f} €".format,
-            "total_appele": "{:,.2f} €".format,
-        }),
+        pivot.style.format("{:,.2f} €".format),
         use_container_width=True
     )
 
-    # ======================================================
-    # EXPORT EXCEL
-    # ======================================================
-    st.divider()
-    st.subheader("📥 Export")
-
-    output = BytesIO()
-
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df_display.to_excel(
-            writer,
-            index=False,
-            sheet_name="Appels de fonds"
-        )
-
-    st.download_button(
-        label="📥 Télécharger l’appel de fonds (Excel)",
-        data=output.getvalue(),
-        file_name=f"appel_fonds_{annee}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    st.caption("Inclut la ligne Loi ALUR (5 %) sur chaque groupe de charges.")
