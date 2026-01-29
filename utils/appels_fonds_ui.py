@@ -1,108 +1,81 @@
-
 import streamlit as st
 import pandas as pd
 
-# -------------------------
-# Helpers
-# -------------------------
+
 def euro(x):
-    if pd.isna(x):
-        return "0 €"
     return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
-# -------------------------
-# UI
-# -------------------------
+
 def appels_fonds_ui(supabase, annee):
-    st.header("📢 Appels de fonds")
+    st.header("💸 Appels de fonds")
 
     # =========================
-    # CHARGEMENT DONNÉES
+    # CHARGEMENT DES DONNÉES
     # =========================
-    budgets = supabase.table("budgets").select("*").eq("annee", annee).execute().data
-    plan = supabase.table("plan_comptable").select("groupe_compte, groupe_charges").execute().data
+    dep = supabase.table("v_depenses_enrichies") \
+        .select("annee, lot_id, montant_ttc") \
+        .eq("annee", annee) \
+        .execute()
 
-    if not budgets:
-        st.warning("Aucun budget défini pour cette année.")
+    lots = supabase.table("lots") \
+        .select("lot_id, lot, tantiemes") \
+        .execute()
+
+    if not dep.data or not lots.data:
+        st.warning("Aucune donnée disponible.")
         return
 
-    df_budget = pd.DataFrame(budgets)
-    df_plan = pd.DataFrame(plan)
+    df_dep = pd.DataFrame(dep.data)
+    df_lots = pd.DataFrame(lots.data)
 
     # =========================
-    # RATTACHEMENT GROUPE CHARGES
+    # CALCULS
     # =========================
-    df = df_budget.merge(
-        df_plan,
-        on="groupe_compte",
-        how="left"
+    total_charges = df_dep["montant_ttc"].sum()
+    total_tantiemes = df_lots["tantiemes"].sum()
+
+    df = df_lots.copy()
+
+    df["charges"] = (
+        df["tantiemes"] / total_tantiemes * total_charges
     )
 
-    # =========================
-    # MAPPING GROUPE CHARGES
-    # =========================
-    mapping = {
-        1: "Charges communes générales",
-        2: "Charges spéciales RDC / sous-sols",
-        3: "Charges spéciales sous-sols",
-        4: "Ascenseurs",
-        5: "Monte voiture"
-    }
-
-    df["groupe_charges_libelle"] = df["groupe_charges"].map(mapping)
-
-    # =========================
-    # CALCUL BUDGET PAR GROUPE
-    # =========================
-    recap = (
-        df.groupby("groupe_charges_libelle", dropna=False)["budget"]
-        .sum()
-        .reset_index()
-        .rename(columns={
-            "groupe_charges_libelle": "Groupe de charges",
-            "budget": "Budget annuel"
-        })
-    )
-
-    # =========================
-    # LOI ALUR
-    # =========================
-    total_budget = recap["Budget annuel"].sum()
-    loi_alur = total_budget * 0.05
-
-    recap = pd.concat([
-        recap,
-        pd.DataFrame([{
-            "Groupe de charges": "Loi ALUR (5 %)",
-            "Budget annuel": loi_alur
-        }])
-    ], ignore_index=True)
-
-    # =========================
-    # TOTAL
-    # =========================
-    total_appels = recap["Budget annuel"].sum()
-
-    recap = pd.concat([
-        recap,
-        pd.DataFrame([{
-            "Groupe de charges": "TOTAL APPELS DE FONDS",
-            "Budget annuel": total_appels
-        }])
-    ], ignore_index=True)
+    df["loi_alur"] = df["charges"] * 0.05
+    df["total_appele"] = df["charges"] + df["loi_alur"]
 
     # =========================
     # AFFICHAGE
     # =========================
-    st.subheader(f"📆 Année {annee}")
+    st.subheader(f"📅 Année {annee}")
 
-    recap_display = recap.copy()
-    recap_display["Budget annuel"] = recap_display["Budget annuel"].apply(euro)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("💰 Charges totales", euro(total_charges))
+    col2.metric("⚖️ Total tantièmes", f"{total_tantiemes:,.0f}")
+    col3.metric("📤 Total appelé", euro(df['total_appele'].sum()))
+
+    st.divider()
+
+    display_df = df[[
+        "lot",
+        "tantiemes",
+        "charges",
+        "loi_alur",
+        "total_appele"
+    ]].copy()
+
+    display_df.columns = [
+        "Lot",
+        "Tantièmes",
+        "Charges",
+        "Loi ALUR (5 %)",
+        "Total appelé"
+    ]
+
+    for col in ["Charges", "Loi ALUR (5 %)", "Total appelé"]:
+        display_df[col] = display_df[col].apply(euro)
 
     st.dataframe(
-        recap_display,
+        display_df,
         use_container_width=True,
         hide_index=True
     )
-
-    st.info("💡 La ligne **Loi ALUR** correspond automatiquement à 5 % du budget annuel.")
