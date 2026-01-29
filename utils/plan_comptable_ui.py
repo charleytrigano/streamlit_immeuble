@@ -14,66 +14,60 @@ def plan_comptable_ui(supabase):
     st.header("📘 Plan comptable")
 
     # =========================
-    # CHARGEMENT
+    # LOAD
     # =========================
     res = supabase.table("plan_comptable").select("*").execute()
     if not res.data:
-        st.warning("Aucun compte dans le plan comptable.")
+        st.warning("Plan comptable vide")
         return
 
     df = pd.DataFrame(res.data)
-
-    # Nettoyage
     df["compte_8"] = df["compte_8"].astype(str)
     df["groupe_charge"] = pd.to_numeric(df["groupe_charge"], errors="coerce")
 
     # =========================
-    # AFFICHAGE TABLE
+    # TABLEAU
     # =========================
     st.subheader("📋 Comptes")
 
-    for _, row in df.sort_values(["groupe_compte", "compte_8"]).iterrows():
-        with st.expander(f"{row['compte_8']} — {row.get('libelle', '')}", expanded=False):
-            col1, col2 = st.columns(2)
+    df_display = df.copy()
+    df_display["groupe_charge_libelle"] = df_display["groupe_charge"].map(GROUPES_CHARGES)
 
-            with col1:
-                st.text_input(
-                    "Compte",
-                    value=row["compte_8"],
-                    disabled=True
-                )
+    selected_index = st.selectbox(
+        "Sélectionner un compte à modifier",
+        options=df_display.index,
+        format_func=lambda i: f"{df_display.loc[i, 'compte_8']} — {df_display.loc[i, 'libelle']}"
+    )
 
-                st.text_input(
-                    "Libellé",
-                    value=row.get("libelle", ""),
-                    disabled=True
-                )
+    row = df_display.loc[selected_index]
 
-                st.text_input(
-                    "Groupe comptable",
-                    value=row.get("groupe_compte", ""),
-                    disabled=True
-                )
+    st.divider()
+    st.subheader("✏️ Modifier le groupe de charges")
 
-            with col2:
-                current_gc = row.get("groupe_charge")
-                current_index = (
-                    list(GROUPES_CHARGES.keys()).index(current_gc)
-                    if current_gc in GROUPES_CHARGES
-                    else 0
-                )
+    with st.form("edit_plan_comptable"):
+        st.text_input("Compte", row["compte_8"], disabled=True)
+        st.text_input("Libellé", row.get("libelle", ""), disabled=True)
+        st.text_input("Groupe comptable", row.get("groupe_compte", ""), disabled=True)
 
-                new_gc = st.selectbox(
-                    "Groupe de charges",
-                    options=list(GROUPES_CHARGES.keys()),
-                    format_func=lambda x: GROUPES_CHARGES[x],
-                    index=current_index,
-                    key=f"gc_{row['compte_8']}"
-                )
+        current_gc = row["groupe_charge"]
+        if current_gc in GROUPES_CHARGES:
+            index = list(GROUPES_CHARGES.keys()).index(current_gc)
+        else:
+            index = 0
 
-                if st.button("💾 Enregistrer", key=f"save_{row['compte_8']}"):
-                    supabase.table("plan_comptable").update(
-                        {"groupe_charge": new_gc}
-                    ).eq("compte_8", row["compte_8"]).execute()
+        new_gc = st.selectbox(
+            "Groupe de charges",
+            options=list(GROUPES_CHARGES.keys()),
+            format_func=lambda x: GROUPES_CHARGES[x],
+            index=index
+        )
 
-                    st.success("Groupe de charges mis à jour")
+        submitted = st.form_submit_button("💾 Enregistrer")
+
+        if submitted:
+            supabase.table("plan_comptable").update(
+                {"groupe_charge": int(new_gc)}
+            ).eq("compte_8", row["compte_8"]).execute()
+
+            st.success("✅ Groupe de charges mis à jour")
+            st.experimental_rerun()
