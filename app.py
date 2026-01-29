@@ -75,6 +75,9 @@ def main():
             st.error("❌ Erreur dans le module Dépenses")
             st.exception(e)
 
+    from utils.appels_fonds_ui import appels_fonds_ui
+appels_fonds_ui(supabase, annee)
+
     # =================================================
     # BUDGET
     # =================================================
