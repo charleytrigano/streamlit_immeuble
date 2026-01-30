@@ -1,141 +1,105 @@
 import streamlit as st
 import pandas as pd
 
-from utils.appels_fonds_pdf import generate_pdf_appel_fonds
-
-
-def euro(x):
-    return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
-
-
+# ======================================
+# APPELS DE FONDS PAR TRIMESTRE
+# ======================================
 def appels_fonds_trimestre_ui(supabase, annee):
-    st.header("📢 Appels de fonds trimestriels")
+    st.subheader(f"📢 Appels de fonds par trimestre – Année {annee}")
 
-    # ======================================================
-    # CHOIX DU TRIMESTRE
-    # ======================================================
-    trimestre = st.selectbox(
-        "Trimestre",
-        options=[1, 2, 3, 4],
-        index=0
+    # ----------------------------------
+    # Chargement du budget annuel par groupe de charges
+    # ----------------------------------
+    res = (
+        supabase
+        .table("v_budget_par_groupe_charges")
+        .select("groupe_charges, budget_annuel")
+        .eq("annee", annee)
+        .execute()
     )
 
-    # ======================================================
-    # CHARGEMENT DES DONNÉES
-    # ======================================================
-    bud = supabase.table("budgets").select("*").eq("annee", annee).execute().data
-    dep = supabase.table("depenses").select("*").eq("annee", annee).execute().data
-    lots = supabase.table("lots").select("*").execute().data
-    plan = supabase.table("plan_comptable").select("*").execute().data
-
-    if not bud or not lots:
-        st.warning("Aucune donnée budget ou lots disponible.")
+    if not res.data:
+        st.warning("Aucun budget trouvé pour cette année")
         return
 
-    df_bud = pd.DataFrame(bud)
-    df_dep = pd.DataFrame(dep)
-    df_lots = pd.DataFrame(lots)
-    df_plan = pd.DataFrame(plan)
+    df = pd.DataFrame(res.data)
 
-    # ======================================================
-    # BUDGET ANNUEL & TRIMESTRIEL
-    # ======================================================
-    budget_annuel = df_bud["budget"].sum()
-    budget_trimestriel = budget_annuel / 4
-    loi_alur_total = budget_trimestriel * 0.05
+    # ----------------------------------
+    # Mapping groupes de charges
+    # ----------------------------------
+    groupes_labels = {
+        1: "Charges communes générales",
+        2: "Charges communes RDC / sous-sols",
+        3: "Charges spéciales sous-sols",
+        4: "Ascenseurs",
+        5: "Monte-voitures",
+    }
 
-    st.metric("Budget annuel", euro(budget_annuel))
-    st.metric("Appel trimestriel (hors ALUR)", euro(budget_trimestriel))
-    st.metric("Loi ALUR (5 %)", euro(loi_alur_total))
+    df["Libellé"] = df["groupe_charges"].map(groupes_labels)
+    df["Budget annuel (€)"] = df["budget_annuel"].round(2)
 
-    # ======================================================
-    # PRÉPARATION RÉPARTITION PAR LOT
-    # ======================================================
-    # Nettoyage
-    df_lots["tantiemes"] = pd.to_numeric(df_lots["tantiemes"], errors="coerce").fillna(0)
-    total_tantiemes = df_lots["tantiemes"].sum()
+    # ----------------------------------
+    # Calcul appel trimestriel
+    # ----------------------------------
+    df["Appel trimestriel (€)"] = (df["Budget annuel (€)"] / 4).round(2)
 
-    if total_tantiemes == 0:
-        st.error("Total tantièmes = 0 → impossible de répartir.")
-        return
+    # ----------------------------------
+    # Ligne Loi ALUR (5 % du budget total)
+    # ----------------------------------
+    total_budget = df["Budget annuel (€)"].sum()
+    alur_annuel = round(total_budget * 0.05, 2)
+    alur_trimestre = round(alur_annuel / 4, 2)
 
-    # Quote-part lot
-    df_lots["quote_part"] = df_lots["tantiemes"] / total_tantiemes
-    df_lots["appel_trimestriel"] = df_lots["quote_part"] * budget_trimestriel
-    df_lots["alur"] = df_lots["appel_trimestriel"] * 0.05
-    df_lots["appel_total"] = df_lots["appel_trimestriel"] + df_lots["alur"]
+    df_alur = pd.DataFrame([{
+        "groupe_charges": 99,
+        "Libellé": "Loi ALUR (5 %)",
+        "Budget annuel (€)": alur_annuel,
+        "Appel trimestriel (€)": alur_trimestre,
+    }])
 
-    # ======================================================
-    # TABLEAU GLOBAL
-    # ======================================================
-    st.subheader("📋 Appels de fonds par lot")
+    df = pd.concat([df, df_alur], ignore_index=True)
+
+    # ----------------------------------
+    # Totaux
+    # ----------------------------------
+    total_annuel = df["Budget annuel (€)"].sum()
+    total_trimestriel = df["Appel trimestriel (€)"].sum()
+
+    df_total = pd.DataFrame([{
+        "Libellé": "TOTAL",
+        "Budget annuel (€)": round(total_annuel, 2),
+        "Appel trimestriel (€)": round(total_trimestriel, 2),
+    }])
+
+    df = pd.concat([df, df_total], ignore_index=True)
+
+    # ----------------------------------
+    # Affichage
+    # ----------------------------------
+    st.markdown("### 💰 Détail des appels de fonds")
 
     st.dataframe(
-        df_lots[[
-            "lot_id",
-            "lot",
-            "proprietaire",
-            "appel_trimestriel",
-            "alur",
-            "appel_total"
-        ]].rename(columns={
-            "lot_id": "Lot ID",
-            "lot": "Lot",
-            "proprietaire": "Propriétaire",
-            "appel_trimestriel": "Appel trimestriel (€)",
-            "alur": "Loi ALUR (€)",
-            "appel_total": "Total à appeler (€)"
-        }).sort_values("Lot"),
+        df[[
+            "Libellé",
+            "Budget annuel (€)",
+            "Appel trimestriel (€)"
+        ]],
         use_container_width=True
     )
 
-    # ======================================================
-    # PDF PAR PROPRIÉTAIRE
-    # ======================================================
-    st.subheader("📄 PDF par propriétaire")
+    # ----------------------------------
+    # Résumé
+    # ----------------------------------
+    col1, col2 = st.columns(2)
 
-    proprietaires = df_lots["proprietaire"].dropna().unique().tolist()
+    col1.metric(
+        "Budget annuel total",
+        f"{total_annuel:,.2f} €".replace(",", " ")
+    )
 
-    for prop in proprietaires:
-        df_p = df_lots[df_lots["proprietaire"] == prop]
+    col2.metric(
+        "Appel trimestriel total",
+        f"{total_trimestriel:,.2f} €".replace(",", " ")
+    )
 
-        total_prop = df_p["appel_trimestriel"].sum()
-        alur_prop = df_p["alur"].sum()
-
-        # Détail par groupe de charges (basé sur le budget)
-        df_bud_grp = (
-            df_bud
-            .groupby(["groupe_compte", "libelle_groupe"], as_index=False)
-            .agg(budget=("budget", "sum"))
-        )
-        df_bud_grp["trimestre"] = df_bud_grp["budget"] / 4
-        df_bud_grp["part_prop"] = df_bud_grp["trimestre"] * (total_prop / budget_trimestriel)
-
-        lignes_detail = [
-            {
-                "libelle": row["libelle_groupe"],
-                "montant": row["part_prop"]
-            }
-            for _, row in df_bud_grp.iterrows()
-        ]
-
-        col1, col2 = st.columns([3, 1])
-        col1.markdown(f"**{prop}** — {euro(total_prop + alur_prop)}")
-
-        if col2.button("📄 PDF", key=f"pdf_{prop}"):
-            pdf = generate_pdf_appel_fonds(
-                proprietaire=prop,
-                annee=annee,
-                trimestre=trimestre,
-                lignes_detail=lignes_detail,
-                total_trimestre=total_prop,
-                loi_alur=alur_prop
-            )
-
-            st.download_button(
-                label="⬇️ Télécharger le PDF",
-                data=pdf,
-                file_name=f"appel_fonds_{prop}_{annee}_T{trimestre}.pdf",
-                mime="application/pdf",
-                key=f"dl_{prop}"
-            )
+    st.success("✅ Appels de fonds trimestriels calculés avec succès")
