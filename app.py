@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client, Client
+from supabase import create_client
 
 # =========================
 # CONFIG
@@ -10,40 +10,22 @@ st.set_page_config(
     layout="wide"
 )
 
+# =========================
+# SUPABASE (ANON KEY)
+# =========================
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_SERVICE_ROLE_KEY"]
+SUPABASE_KEY = st.secrets["SUPABASE_ANON_KEY"]
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# =========================
-# SIDEBAR
-# =========================
-st.sidebar.title("Paramètres")
-
-annee = st.sidebar.selectbox(
-    "Année",
-    [2024, 2025, 2026],
-    index=1
-)
+ANNEE = 2025
 
 # =========================
-# TITRE
+# HELPERS
 # =========================
-st.title("🏢 Pilotage des charges de l’immeuble")
-
-tabs = st.tabs([
-    "📊 Répartition par lot",
-    "🧮 Contrôle répartition"
-])
-
-# ======================================================
-# ONGLET 1 — RÉPARTITION PAR LOT
-# ======================================================
-with tabs[0]:
-
-    st.subheader("Répartition des charges par lot")
-
-    res = (
+@st.cache_data(ttl=60)
+def load_repartition(annee: int):
+    return (
         supabase
         .table("repartition_par_lot")
         .select("*")
@@ -51,72 +33,79 @@ with tabs[0]:
         .order("groupe_compte")
         .order("lot")
         .execute()
+        .data
     )
 
-    if not res.data:
-        st.warning("Aucune donnée pour cette année.")
-    else:
-        df = pd.DataFrame(res.data)
-
-        df["part_lot"] = df["part_lot"].astype(float).round(2)
-
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True
-        )
-
-        st.markdown("### 🔢 Total réparti")
-        st.metric(
-            label="Total €",
-            value=f"{df['part_lot'].sum():,.2f} €".replace(",", " ")
-        )
-
-# ======================================================
-# ONGLET 2 — CONTRÔLE
-# ======================================================
-with tabs[1]:
-
-    st.subheader("Contrôle budget vs répartition")
-
-    res_ctrl = (
+@st.cache_data(ttl=60)
+def load_controle(annee: int):
+    return (
         supabase
         .table("repartition_par_lot_controle")
         .select("*")
         .eq("annee", annee)
         .order("groupe_compte")
         .execute()
+        .data
     )
 
-    if not res_ctrl.data:
-        st.warning("Aucune donnée de contrôle.")
+# =========================
+# UI
+# =========================
+st.title("🏢 Pilotage des charges de l’immeuble")
+
+tab1, tab2 = st.tabs([
+    "📊 Répartition par lot",
+    "✅ Contrôles budgétaires"
+])
+
+# =========================
+# TAB 1 — RÉPARTITION
+# =========================
+with tab1:
+    data = load_repartition(ANNEE)
+    df = pd.DataFrame(data)
+
+    if df.empty:
+        st.warning("Aucune donnée de répartition.")
     else:
-        df_ctrl = pd.DataFrame(res_ctrl.data)
-
-        for col in ["budget_groupe", "total_reparti", "ecart"]:
-            df_ctrl[col] = df_ctrl[col].astype(float).round(2)
-
         st.dataframe(
-            df_ctrl,
+            df,
             use_container_width=True,
             hide_index=True
         )
 
-        st.markdown("### 🚨 Écarts détectés")
+        st.download_button(
+            "⬇️ Export CSV",
+            df.to_csv(index=False).encode("utf-8"),
+            file_name=f"repartition_lots_{ANNEE}.csv",
+            mime="text/csv"
+        )
 
-        df_alert = df_ctrl[df_ctrl["ecart"] != 0]
+# =========================
+# TAB 2 — CONTROLES
+# =========================
+with tab2:
+    data = load_controle(ANNEE)
+    df = pd.DataFrame(data)
 
-        if df_alert.empty:
-            st.success("Aucun écart détecté 🎉")
+    if df.empty:
+        st.warning("Aucun contrôle disponible.")
+    else:
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        erreurs = df[df["statut"] != "OK"]
+        if not erreurs.empty:
+            st.error("⚠️ Des incohérences ont été détectées.")
         else:
-            st.error("Des écarts existent entre budget et répartition")
-            st.dataframe(
-                df_alert,
-                use_container_width=True,
-                hide_index=True
-            )
+            st.success("✅ Tous les groupes sont cohérents.")
 
-# =========================
-# FOOTER
-# =========================
-st.caption("Pilotage des charges — Supabase × Streamlit")
+        st.download_button(
+            "⬇️ Export contrôles CSV",
+            df.to_csv(index=False).encode("utf-8"),
+            file_name=f"controle_repartition_{ANNEE}.csv",
+            mime="text/csv"
+        )
