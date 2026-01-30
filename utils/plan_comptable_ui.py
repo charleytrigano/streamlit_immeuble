@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 
 # =========================
 # PLAN COMPTABLE UI
 # =========================
 def plan_comptable_ui(supabase):
 
-    st.header("📘 Plan comptable")
+    st.header("📘 Plan comptable – Groupes de charges")
 
     # =========================
     # CHARGEMENT
@@ -32,41 +33,16 @@ def plan_comptable_ui(supabase):
             df[col] = None
 
     # =========================
-    # FILTRES
+    # TABLE LECTURE
     # =========================
-    with st.expander("🔎 Filtres", expanded=True):
-        col1, col2, col3 = st.columns(3)
-
-        groupe_f = col1.selectbox(
-            "Groupe comptable",
-            ["Tous"] + sorted(df["groupe_compte"].dropna().unique().tolist())
-        )
-
-        charge_f = col2.selectbox(
-            "Groupe de charges",
-            ["Tous"] + sorted(df["groupe_charges"].dropna().astype(str).unique().tolist())
-        )
-
-        libelle_f = col3.text_input("Recherche libellé")
-
-    df_f = df.copy()
-
-    if groupe_f != "Tous":
-        df_f = df_f[df_f["groupe_compte"] == groupe_f]
-
-    if charge_f != "Tous":
-        df_f = df_f[df_f["groupe_charges"].astype(str) == charge_f]
-
-    if libelle_f:
-        df_f = df_f[df_f["libelle"].str.contains(libelle_f, case=False, na=False)]
-
-    # =========================
-    # TABLE
-    # =========================
-    st.markdown("### 📋 Comptes existants")
-
     st.dataframe(
-        df_f.sort_values(["groupe_compte", "compte_8"]),
+        df[[
+            "compte_8",
+            "libelle",
+            "groupe_compte",
+            "libelle_groupe",
+            "groupe_charges"
+        ]],
         use_container_width=True,
         hide_index=True
     )
@@ -74,23 +50,22 @@ def plan_comptable_ui(supabase):
     st.divider()
 
     # =========================
-    # AJOUT COMPTE
+    # AJOUT
     # =========================
     with st.expander("➕ Ajouter un compte"):
-        with st.form("add_compte"):
-            col1, col2, col3 = st.columns(3)
+        with st.form("add_compte_form"):
+            c1, c2, c3 = st.columns(3)
 
-            a_compte = col1.text_input("Compte (8 chiffres)")
-            a_libelle = col2.text_input("Libellé")
-            a_groupe = col3.text_input("Groupe comptable (ex: 601)")
+            compte_8 = c1.text_input("Compte (8 chiffres)")
+            libelle = c2.text_input("Libellé")
+            groupe_compte = c3.text_input("Groupe comptable (ex : 601)")
 
-            col4, col5 = st.columns(2)
-            a_libelle_grp = col4.text_input("Libellé groupe")
-            a_groupe_charges = col5.selectbox(
+            c4, c5 = st.columns(2)
+            libelle_groupe = c4.text_input("Libellé groupe")
+
+            groupe_charges = c5.selectbox(
                 "Groupe de charges",
-                [
-                    1, 2, 3, 4, 5
-                ],
+                [1, 2, 3, 4, 5],
                 format_func=lambda x: {
                     1: "1 – Charges communes générales",
                     2: "2 – Charges RDC / sous-sols",
@@ -100,43 +75,50 @@ def plan_comptable_ui(supabase):
                 }[x]
             )
 
-            if st.form_submit_button("➕ Ajouter"):
-                supabase.table("plan_comptable").insert({
-                    "compte_8": a_compte,
-                    "libelle": a_libelle,
-                    "groupe_compte": a_groupe,
-                    "libelle_groupe": a_libelle_grp,
-                    "groupe_charges": a_groupe_charges
-                }).execute()
+            submit_add = st.form_submit_button("➕ Ajouter")
 
-                st.success("Compte ajouté")
-                st.rerun()
+        if submit_add:
+            supabase.table("plan_comptable").insert({
+                "compte_8": compte_8,
+                "libelle": libelle,
+                "groupe_compte": groupe_compte,
+                "libelle_groupe": libelle_groupe,
+                "groupe_charges": groupe_charges
+            }).execute()
+
+            st.success("Compte ajouté")
+            st.rerun()
 
     st.divider()
 
     # =========================
     # MODIFIER / SUPPRIMER
     # =========================
-    st.markdown("### ✏️ Modifier / 🗑️ Supprimer un compte")
+    st.markdown("### ✏️ Modifier / 🗑️ Supprimer")
 
     selected = st.selectbox(
-        "Compte à modifier",
-        df_f["compte_8"].tolist()
+        "Compte",
+        df["compte_8"].tolist()
     )
 
     row = df[df["compte_8"] == selected].iloc[0]
 
-    with st.form(f"edit_{selected}"):
-        col1, col2, col3 = st.columns(3)
+    # Sécurisation NaN
+    gc = row["groupe_charges"]
+    if pd.isna(gc):
+        gc = 1
 
-        e_libelle = col1.text_input("Libellé", row["libelle"])
-        e_groupe = col2.text_input("Groupe comptable", row["groupe_compte"])
-        e_libelle_grp = col3.text_input("Libellé groupe", row["libelle_groupe"])
+    with st.form(f"edit_form_{selected}"):
+        c1, c2, c3 = st.columns(3)
+
+        e_libelle = c1.text_input("Libellé", row["libelle"])
+        e_groupe_compte = c2.text_input("Groupe comptable", row["groupe_compte"])
+        e_libelle_groupe = c3.text_input("Libellé groupe", row["libelle_groupe"])
 
         e_groupe_charges = st.selectbox(
             "Groupe de charges",
             [1, 2, 3, 4, 5],
-            index=[1, 2, 3, 4, 5].index(int(row["groupe_charges"])) if row["groupe_charges"] else 0,
+            index=[1, 2, 3, 4, 5].index(int(gc)),
             format_func=lambda x: {
                 1: "1 – Charges communes générales",
                 2: "2 – Charges RDC / sous-sols",
@@ -146,23 +128,25 @@ def plan_comptable_ui(supabase):
             }[x]
         )
 
-        col_btn1, col_btn2 = st.columns(2)
+        col_a, col_b = st.columns(2)
+        submit_edit = col_a.form_submit_button("💾 Enregistrer")
+        submit_delete = col_b.form_submit_button("🗑️ Supprimer")
 
-        if col_btn1.form_submit_button("💾 Enregistrer"):
-            supabase.table("plan_comptable").update({
-                "libelle": e_libelle,
-                "groupe_compte": e_groupe,
-                "libelle_groupe": e_libelle_grp,
-                "groupe_charges": e_groupe_charges
-            }).eq("compte_8", selected).execute()
+    if submit_edit:
+        supabase.table("plan_comptable").update({
+            "libelle": e_libelle,
+            "groupe_compte": e_groupe_compte,
+            "libelle_groupe": e_libelle_groupe,
+            "groupe_charges": e_groupe_charges
+        }).eq("compte_8", selected).execute()
 
-            st.success("Compte mis à jour")
-            st.rerun()
+        st.success("Compte mis à jour")
+        st.rerun()
 
-        if col_btn2.form_submit_button("🗑️ Supprimer"):
-            supabase.table("plan_comptable").delete().eq(
-                "compte_8", selected
-            ).execute()
+    if submit_delete:
+        supabase.table("plan_comptable").delete().eq(
+            "compte_8", selected
+        ).execute()
 
-            st.warning("Compte supprimé")
-            st.rerun()
+        st.warning("Compte supprimé")
+        st.rerun()
