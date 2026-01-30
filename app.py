@@ -1,155 +1,122 @@
 import streamlit as st
-from supabase import create_client
+import pandas as pd
+from supabase import create_client, Client
 
 # =========================
-# CONFIG STREAMLIT
+# CONFIG
 # =========================
 st.set_page_config(
     page_title="Pilotage des charges",
     layout="wide"
 )
 
-# =========================
-# SUPABASE (ANON KEY)
-# =========================
-@st.cache_resource
-def get_supabase():
-    try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_ANON_KEY"]
-    except KeyError:
-        st.error(
-            "❌ Supabase mal configuré.\n\n"
-            "Vérifie `.streamlit/secrets.toml` avec :\n\n"
-            "SUPABASE_URL\n"
-            "SUPABASE_ANON_KEY"
-        )
-        st.stop()
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_SERVICE_ROLE_KEY"]
 
-    return create_client(url, key)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # =========================
-# MAIN
+# SIDEBAR
 # =========================
-def main():
-    supabase = get_supabase()
+st.sidebar.title("Paramètres")
 
-    # =========================
-    # SIDEBAR – FILTRES GLOBAUX
-    # =========================
-    st.sidebar.title("🔎 Filtres globaux")
+annee = st.sidebar.selectbox(
+    "Année",
+    [2024, 2025, 2026],
+    index=1
+)
 
-    annee = st.sidebar.selectbox(
-        "Année",
-        options=[2023, 2024, 2025, 2026],
-        index=2
+# =========================
+# TITRE
+# =========================
+st.title("🏢 Pilotage des charges de l’immeuble")
+
+tabs = st.tabs([
+    "📊 Répartition par lot",
+    "🧮 Contrôle répartition"
+])
+
+# ======================================================
+# ONGLET 1 — RÉPARTITION PAR LOT
+# ======================================================
+with tabs[0]:
+
+    st.subheader("Répartition des charges par lot")
+
+    res = (
+        supabase
+        .table("repartition_par_lot")
+        .select("*")
+        .eq("annee", annee)
+        .order("groupe_compte")
+        .order("lot")
+        .execute()
     )
 
-    # =========================
-    # TITRE
-    # =========================
-    st.title("📊 Pilotage des charges de l’immeuble")
+    if not res.data:
+        st.warning("Aucune donnée pour cette année.")
+    else:
+        df = pd.DataFrame(res.data)
 
-    # =========================
-    # ONGLET PRINCIPAL
-    # =========================
-    (
-        tab_dep,
-        tab_bud,
-        tab_bvr,
-        tab_appels,
-        tab_repart,
-        tab_plan,
-        tab_lots
-    ) = st.tabs([
-        "📄 Dépenses",
-        "💰 Budget",
-        "📊 Budget vs Réel",
-        "📢 Appels de fonds",
-        "🏢 Répartition par lot",
-        "📘 Plan comptable",
-        "🏠 Lots"
-    ])
+        df["part_lot"] = df["part_lot"].astype(float).round(2)
 
-    # =========================
-    # DÉPENSES
-    # =========================
-    with tab_dep:
-        try:
-            from utils.depenses_ui import depenses_ui
-            depenses_ui(supabase, annee)
-        except Exception as e:
-            st.error("❌ Erreur dans le module Dépenses")
-            st.exception(e)
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True
+        )
 
-    # =========================
-    # BUDGET
-    # =========================
-    with tab_bud:
-        try:
-            from utils.budget_ui import budget_ui
-            budget_ui(supabase, annee)
-        except Exception as e:
-            st.error("❌ Erreur dans le module Budget")
-            st.exception(e)
+        st.markdown("### 🔢 Total réparti")
+        st.metric(
+            label="Total €",
+            value=f"{df['part_lot'].sum():,.2f} €".replace(",", " ")
+        )
 
-    # =========================
-    # BUDGET VS RÉEL
-    # =========================
-    with tab_bvr:
-        try:
-            from utils.budget_vs_reel_ui import budget_vs_reel_ui
-            budget_vs_reel_ui(supabase, annee)
-        except Exception as e:
-            st.error("❌ Erreur dans le module Budget vs Réel")
-            st.exception(e)
+# ======================================================
+# ONGLET 2 — CONTRÔLE
+# ======================================================
+with tabs[1]:
 
-    # =========================
-    # APPELS DE FONDS (TRIMESTRIEL + LOI ALUR)
-    # =========================
-    with tab_appels:
-        try:
-            from utils.appels_fonds_trimestre_ui import appels_fonds_trimestre_ui
-            appels_fonds_trimestre_ui(supabase, annee)
-        except Exception as e:
-            st.error("❌ Erreur dans le module Appels de fonds")
-            st.exception(e)
+    st.subheader("Contrôle budget vs répartition")
 
-    # =========================
-    # RÉPARTITION PAR LOT
-    # =========================
-    with tab_repart:
-        try:
-            from utils.repartition_lots_ui import repartition_lots_ui
-            repartition_lots_ui(supabase, annee)
-        except Exception as e:
-            st.error("❌ Erreur dans le module Répartition par lot")
-            st.exception(e)
+    res_ctrl = (
+        supabase
+        .table("repartition_par_lot_controle")
+        .select("*")
+        .eq("annee", annee)
+        .order("groupe_compte")
+        .execute()
+    )
 
-    # =========================
-    # PLAN COMPTABLE
-    # =========================
-    with tab_plan:
-        try:
-            from utils.plan_comptable_ui import plan_comptable_ui
-            plan_comptable_ui(supabase)
-        except Exception as e:
-            st.error("❌ Erreur dans le module Plan comptable")
-            st.exception(e)
+    if not res_ctrl.data:
+        st.warning("Aucune donnée de contrôle.")
+    else:
+        df_ctrl = pd.DataFrame(res_ctrl.data)
 
-    # =========================
-    # LOTS
-    # =========================
-    with tab_lots:
-        try:
-            from utils.lots_ui import lots_ui
-            lots_ui(supabase)
-        except Exception as e:
-            st.error("❌ Erreur dans le module Lots")
-            st.exception(e)
+        for col in ["budget_groupe", "total_reparti", "ecart"]:
+            df_ctrl[col] = df_ctrl[col].astype(float).round(2)
+
+        st.dataframe(
+            df_ctrl,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.markdown("### 🚨 Écarts détectés")
+
+        df_alert = df_ctrl[df_ctrl["ecart"] != 0]
+
+        if df_alert.empty:
+            st.success("Aucun écart détecté 🎉")
+        else:
+            st.error("Des écarts existent entre budget et répartition")
+            st.dataframe(
+                df_alert,
+                use_container_width=True,
+                hide_index=True
+            )
 
 # =========================
-# RUN
+# FOOTER
 # =========================
-if __name__ == "__main__":
-    main()
+st.caption("Pilotage des charges — Supabase × Streamlit")
