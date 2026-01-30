@@ -5,17 +5,13 @@ GROUPES_CHARGES = {
     1: "Charges communes générales",
     2: "Charges communes RDC / sous-sols",
     3: "Charges spéciales sous-sols",
-    4: "Charges garages / parkings",
-    5: "Ascenseurs",
-    6: "Monte-voitures",
+    4: "Ascenseurs",
+    5: "Monte-voitures",
 }
 
 def plan_comptable_ui(supabase):
     st.subheader("📘 Plan comptable – Groupes de charges")
 
-    # =========================
-    # Chargement des données
-    # =========================
     res = (
         supabase
         .table("plan_comptable")
@@ -25,67 +21,34 @@ def plan_comptable_ui(supabase):
     )
 
     if not res.data:
-        st.warning("Aucune donnée dans le plan comptable")
+        st.warning("Plan comptable vide")
         return
 
     df = pd.DataFrame(res.data)
 
-    # Sécurité absolue
-    if "groupe_charges" not in df.columns:
-        st.error("❌ Colonne groupe_charges absente en base")
-        return
+    for _, row in df.iterrows():
+        compte = row["compte_8"]
+        libelle = row["libelle"]
+        groupe_actuel = row.get("groupe_charges")
 
-    df["groupe_charges"] = pd.to_numeric(df["groupe_charges"], errors="coerce")
+        with st.container(border=True):
+            st.markdown(f"**{compte} – {libelle}**")
 
-    # =========================
-    # Sélection du compte
-    # =========================
-    comptes = df["compte_8"].tolist()
+            groupe = st.selectbox(
+                "Groupe de charges",
+                options=list(GROUPES_CHARGES.keys()),
+                format_func=lambda x: f"{x} – {GROUPES_CHARGES[x]}",
+                index=list(GROUPES_CHARGES.keys()).index(groupe_actuel)
+                if groupe_actuel in GROUPES_CHARGES else 0,
+                key=f"select_{compte}"
+            )
 
-    selected_compte = st.selectbox(
-        "Compte comptable",
-        options=comptes,
-        format_func=lambda c: f"{c} – {df.loc[df['compte_8']==c, 'libelle'].values[0]}"
-    )
-
-    ligne = df[df["compte_8"] == selected_compte].iloc[0]
-
-    # =========================
-    # Sélection du groupe
-    # =========================
-    current_groupe = int(ligne["groupe_charges"]) if pd.notna(ligne["groupe_charges"]) else None
-
-    selected_groupe = st.selectbox(
-        "Groupe de charges",
-        options=list(GROUPES_CHARGES.keys()),
-        index=list(GROUPES_CHARGES.keys()).index(current_groupe)
-        if current_groupe in GROUPES_CHARGES else 0,
-        format_func=lambda k: f"{k} – {GROUPES_CHARGES[k]}"
-    )
-
-    # =========================
-    # Sauvegarde
-    # =========================
-    if st.button("💾 Enregistrer"):
-        (
-            supabase
-            .table("plan_comptable")
-            .update({"groupe_charges": selected_groupe})
-            .eq("compte_8", selected_compte)
-            .execute()
-        )
-
-        st.success("✅ Groupe de charges mis à jour")
-        st.rerun()
-
-    # =========================
-    # Vue globale
-    # =========================
-    st.markdown("### 📋 Vue complète")
-
-    df["groupe_label"] = df["groupe_charges"].map(GROUPES_CHARGES)
-
-    st.dataframe(
-        df[["compte_8", "libelle", "groupe_charges", "groupe_label"]],
-        use_container_width=True
-    )
+            if st.button("💾 Enregistrer", key=f"save_{compte}"):
+                (
+                    supabase
+                    .table("plan_comptable")
+                    .update({"groupe_charges": groupe})
+                    .eq("compte_8", compte)
+                    .execute()
+                )
+                st.success("Groupe de charges mis à jour")
