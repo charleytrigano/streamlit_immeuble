@@ -12,12 +12,12 @@ def budget_vs_reel_ui(supabase, annee):
     st.subheader(f"📊 Budget vs Réel – {annee}")
 
     # =====================================================
-    # CHARGEMENT DU BUDGET (par groupe_compte / groupe_charges)
+    # BUDGET (sans groupe_charges)
     # =====================================================
     bud_resp = (
         supabase
         .table("budgets")
-        .select("groupe_compte, groupe_charges, budget")
+        .select("groupe_compte, budget")
         .eq("annee", annee)
         .execute()
     )
@@ -29,7 +29,26 @@ def budget_vs_reel_ui(supabase, annee):
     df_budget = pd.DataFrame(bud_resp.data)
 
     # =====================================================
-    # CHARGEMENT DU RÉEL (vue enrichie)
+    # PLAN COMPTABLE (pour groupe_charges)
+    # =====================================================
+    plan_resp = (
+        supabase
+        .table("plan_comptable")
+        .select("groupe_compte, groupe_charges")
+        .execute()
+    )
+
+    df_plan = pd.DataFrame(plan_resp.data).drop_duplicates("groupe_compte")
+
+    # enrichissement budget → groupe_charges
+    df_budget = df_budget.merge(
+        df_plan,
+        on="groupe_compte",
+        how="left"
+    )
+
+    # =====================================================
+    # RÉEL (vue enrichie)
     # =====================================================
     dep_resp = (
         supabase
@@ -69,70 +88,27 @@ def budget_vs_reel_ui(supabase, annee):
     df["reel"] = df["reel"].fillna(0)
     df["ecart"] = df["budget"] - df["reel"]
     df["ecart_pct"] = df.apply(
-        lambda r: (r["ecart"] / r["budget"] * 100) if r["budget"] != 0 else 0,
+        lambda r: (r["ecart"] / r["budget"] * 100) if r["budget"] else 0,
         axis=1
     )
 
     # =====================================================
-    # KPI GLOBAUX
+    # KPI
     # =====================================================
     budget_total = df["budget"].sum()
     reel_total = df["reel"].sum()
     ecart_total = budget_total - reel_total
-    ecart_pct_total = (ecart_total / budget_total * 100) if budget_total else 0
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     c1.metric("Budget total", euro(budget_total))
     c2.metric("Réel total", euro(reel_total))
     c3.metric("Écart", euro(ecart_total))
-    c4.metric("Écart %", f"{ecart_pct_total:.2f} %")
 
     # =====================================================
-    # LOI ALUR – 5 %
+    # TABLEAU FINAL
     # =====================================================
-    loi_alur = budget_total * 0.05
-    st.markdown("### ⚖️ Loi ALUR")
-    st.metric("Provision Loi ALUR (5 %)", euro(loi_alur))
-
-    # =====================================================
-    # SYNTHÈSE PAR GROUPE DE CHARGES
-    # =====================================================
-    st.markdown("### 🧾 Synthèse par groupe de charges")
-
-    synthese = (
-        df
-        .groupby("groupe_charges", as_index=False)
-        .agg(
-            Budget=("budget", "sum"),
-            Réel=("reel", "sum")
-        )
-    )
-
-    synthese["Écart"] = synthese["Budget"] - synthese["Réel"]
-    synthese["Écart %"] = synthese.apply(
-        lambda r: (r["Écart"] / r["Budget"] * 100) if r["Budget"] != 0 else 0,
-        axis=1
-    )
-
     st.dataframe(
-        synthese.style.format({
-            "Budget": euro,
-            "Réel": euro,
-            "Écart": euro,
-            "Écart %": "{:.2f} %"
-        }),
-        use_container_width=True
-    )
-
-    # =====================================================
-    # DÉTAIL PAR GROUPE DE COMPTES
-    # =====================================================
-    st.markdown("### 🔍 Détail par groupe de comptes")
-
-    detail = df.sort_values(["groupe_charges", "groupe_compte"])
-
-    st.dataframe(
-        detail.rename(columns={
+        df.sort_values(["groupe_charges", "groupe_compte"]).rename(columns={
             "groupe_charges": "Groupe de charges",
             "groupe_compte": "Groupe de compte",
             "budget": "Budget",
