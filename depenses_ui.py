@@ -13,7 +13,7 @@ def depenses_ui(supabase, annee):
     st.header(f"📄 Dépenses – {annee}")
 
     # =========================
-    # CHARGEMENT DÉPENSES
+    # CHARGEMENT DES DÉPENSES
     # =========================
     resp_dep = (
         supabase
@@ -33,7 +33,12 @@ def depenses_ui(supabase, annee):
     df_dep["date"] = pd.to_datetime(df_dep["date"], errors="coerce")
 
     # =========================
-    # CHARGEMENT PLAN COMPTABLE
+    # CRÉATION COLONNE SÉCURISÉE
+    # =========================
+    df_dep["groupe_charges"] = "Non affecté"
+
+    # =========================
+    # PLAN COMPTABLE
     # =========================
     resp_plan = (
         supabase
@@ -44,23 +49,25 @@ def depenses_ui(supabase, annee):
 
     if resp_plan.data:
         df_plan = pd.DataFrame(resp_plan.data)
-    else:
-        df_plan = pd.DataFrame(columns=["compte_8", "groupe_charges"])
 
-    # =========================
-    # JOINTURE
-    # =========================
-    df = df_dep.merge(
-        df_plan,
-        left_on="compte",
-        right_on="compte_8",
-        how="left"
-    )
+        df_dep = df_dep.merge(
+            df_plan,
+            left_on="compte",
+            right_on="compte_8",
+            how="left"
+        )
 
-    if "groupe_charges" not in df.columns:
-        df["groupe_charges"] = "Non affecté"
+        # on écrase la valeur par défaut si trouvée
+        df_dep["groupe_charges"] = df_dep["groupe_charges_y"].fillna(df_dep["groupe_charges_x"])
 
-    df["groupe_charges"] = df["groupe_charges"].fillna("Non affecté")
+        # nettoyage colonnes techniques
+        df_dep.drop(
+            columns=[c for c in df_dep.columns if c.endswith("_x") or c.endswith("_y") or c == "compte_8"],
+            inplace=True,
+            errors="ignore"
+        )
+
+    df = df_dep.copy()
 
     # =========================
     # FILTRES
@@ -70,15 +77,15 @@ def depenses_ui(supabase, annee):
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        groupes = ["Tous"] + sorted(df["groupe_charges"].unique().tolist())
+        groupes = ["Tous"] + sorted(df["groupe_charges"].astype(str).unique().tolist())
         groupe_sel = st.selectbox("Groupe de charges", groupes)
 
     with col2:
-        fournisseurs = ["Tous"] + sorted(df["fournisseur"].dropna().unique().tolist())
+        fournisseurs = ["Tous"] + sorted(df["fournisseur"].dropna().astype(str).unique().tolist())
         fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
 
     with col3:
-        comptes = ["Tous"] + sorted(df["compte"].dropna().unique().tolist())
+        comptes = ["Tous"] + sorted(df["compte"].dropna().astype(str).unique().tolist())
         compte_sel = st.selectbox("Compte", comptes)
 
     df_f = df.copy()
@@ -135,7 +142,7 @@ def depenses_ui(supabase, annee):
     )
 
     # =========================
-    # DÉTAIL DES ÉCRITURES
+    # DÉTAIL
     # =========================
     st.subheader("📋 Détail des dépenses")
 
