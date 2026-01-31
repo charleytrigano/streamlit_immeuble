@@ -1,124 +1,77 @@
 import streamlit as st
 from supabase import create_client
 
+from utils.depenses_ui import depenses_ui
+from utils.plan_comptable_ui import plan_comptable_ui
+from utils.lots_ui import lots_ui
+from utils.repartition_lots_ui import repartition_lots_ui
+from utils.appels_fonds_trimestre_ui import appels_fonds_trimestre_ui
+
+
 # =========================
 # CONFIG STREAMLIT
 # =========================
 st.set_page_config(
-    page_title="Pilotage des charges",
+    page_title="Immeuble – Pilotage",
     layout="wide"
 )
 
-# =========================
-# SUPABASE (ANON KEY)
-# =========================
-@st.cache_resource
-def get_supabase():
-    try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_ANON_KEY"]
-    except KeyError:
-        st.error(
-            "❌ Supabase mal configuré\n\n"
-            "Clés requises :\n"
-            "SUPABASE_URL\n"
-            "SUPABASE_ANON_KEY"
-        )
-        st.stop()
+st.title("🏢 Pilotage de l’immeuble")
 
-    return create_client(url, key)
 
 # =========================
-# MAIN
+# CONNEXION SUPABASE (ANON)
 # =========================
-def main():
-    supabase = get_supabase()
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_ANON_KEY"]
 
-    # =========================
-    # FILTRES GLOBAUX
-    # =========================
-    st.sidebar.title("🔎 Filtres globaux")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    annee = st.sidebar.selectbox(
-        "Année",
-        [2023, 2024, 2025, 2026],
-        index=2
-    )
-
-    st.title("📊 Pilotage des charges de l’immeuble")
-
-    # =========================
-    # ONGLET PRINCIPAL
-    # =========================
-    (
-        tab_dep,
-        tab_bud,
-        tab_bvr,
-        tab_appels,
-        tab_repart,
-        tab_plan,
-        tab_lots
-    ) = st.tabs([
-        "📄 Dépenses",
-        "💰 Budget",
-        "📊 Budget vs Réel",
-        "📢 Appels de fonds trimestriels",
-        "🏢 Répartition par lot",
-        "📘 Plan comptable",
-        "🏠 Lots"
-    ])
-
-    # =========================
-    # DÉPENSES
-    # =========================
-    with tab_dep:
-        from utils.depenses_ui import depenses_ui
-        depenses_ui(supabase, annee)
-
-    # =========================
-    # BUDGET
-    # =========================
-    with tab_bud:
-        from utils.budget_ui import budget_ui
-        budget_ui(supabase, annee)
-
-    # =========================
-    # BUDGET VS RÉEL
-    # =========================
-    with tab_bvr:
-        from utils.budget_vs_reel_ui import budget_vs_reel_ui
-        budget_vs_reel_ui(supabase, annee)
-
-    # =========================
-    # APPELS DE FONDS TRIMESTRIELS ✅
-    # =========================
-    with tab_appels:
-        from utils.appels_fonds_trimestre_ui import appels_fonds_trimestre_ui
-        appels_fonds_trimestre_ui(supabase, annee)
-
-    # =========================
-    # RÉPARTITION PAR LOT
-    # =========================
-    with tab_repart:
-        from utils.repartition_lots_ui import repartition_lots_ui
-        repartition_lots_ui(supabase, annee)
-
-    # =========================
-    # PLAN COMPTABLE
-    # =========================
-    with tab_plan:
-        from utils.plan_comptable_ui import plan_comptable_ui
-        plan_comptable_ui(supabase)
-
-    # =========================
-    # LOTS
-    # =========================
-    with tab_lots:
-        from utils.lots_ui import lots_ui
-        lots_ui(supabase)
 
 # =========================
-# RUN
+# SIDEBAR
 # =========================
-if __name__ == "__main__":
-    main()
+st.sidebar.header("⚙️ Paramètres")
+
+annee = st.sidebar.selectbox(
+    "Année",
+    options=[2024, 2025, 2026],
+    index=1
+)
+
+onglet = st.sidebar.radio(
+    "Navigation",
+    [
+        "Dépenses",
+        "Plan comptable",
+        "Lots",
+        "Répartition par lot",
+        "Appels de fonds trimestriels",
+    ]
+)
+
+
+# =========================
+# ROUTAGE
+# =========================
+if onglet == "Dépenses":
+    depenses_ui(supabase, annee)
+
+elif onglet == "Plan comptable":
+    plan_comptable_ui(supabase)
+
+elif onglet == "Lots":
+    lots_ui(supabase)
+
+elif onglet == "Répartition par lot":
+    repartition_lots_ui(supabase, annee)
+
+elif onglet == "Appels de fonds trimestriels":
+    appels_fonds_trimestre_ui(supabase, annee)
+
+
+# =========================
+# FOOTER
+# =========================
+st.markdown("---")
+st.caption("Immeuble – Pilotage | Calculs syndic & appels de fonds")
