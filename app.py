@@ -20,13 +20,14 @@ def get_supabase():
     except KeyError:
         st.error(
             "❌ Clés Supabase manquantes dans st.secrets\n\n"
-            "Attendu :\n"
-            "- SUPABASE_URL\n"
-            "- SUPABASE_ANON_KEY"
+            "Dans .streamlit/secrets.toml, il faut :\n"
+            "SUPABASE_URL = \"...\"\n"
+            "SUPABASE_ANON_KEY = \"...\""
         )
         st.stop()
 
     return create_client(url, key)
+
 
 # ======================================================
 # MAIN
@@ -50,16 +51,9 @@ def main():
     # ------------------------------
     st.title("📊 Pilotage des charges de l’immeuble")
 
-    # ------------------------------
-    # ONGLET PRINCIPAL
-    # ------------------------------
-    tab_depenses, = st.tabs([
-        "📄 Dépenses"
-    ])
+    # Pour l'instant : un seul onglet "Dépenses"
+    tab_depenses, = st.tabs(["📄 Dépenses"])
 
-    # ------------------------------
-    # DÉPENSES
-    # ------------------------------
     with tab_depenses:
         try:
             from depenses_ui import depenses_ui
