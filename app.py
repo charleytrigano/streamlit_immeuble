@@ -60,7 +60,7 @@ elif menu == "Appels de fonds trimestre":
     appels_fonds_trimestriels_ui()
 
 elif menu == "Contrôle répartition":
-    controle_repartition_ui()
+    controle_repartition_ui(supabase)
 
 elif menu == "Plan comptable":
     plan_comptable_ui()
