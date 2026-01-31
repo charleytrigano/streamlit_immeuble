@@ -3,90 +3,78 @@ import pandas as pd
 
 
 def euro(x):
-    try:
-        return f"{float(x):,.2f} €".replace(",", " ").replace(".", ",")
-    except Exception:
-        return "0,00 €"
+    return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
 
 def depenses_ui(supabase, annee):
     st.header(f"📄 Dépenses – {annee}")
 
-    # =========================
-    # CHARGEMENT DES DÉPENSES
-    # =========================
-    resp_dep = (
+    # ======================================================
+    # CHARGEMENT DES DONNÉES
+    # ======================================================
+    dep_resp = (
         supabase
         .table("depenses")
-        .select("depense_id, annee, compte, poste, fournisseur, date, montant_ttc")
+        .select(
+            "depense_id, annee, compte, poste, fournisseur, date, montant_ttc, lot_id, commentaire"
+        )
         .eq("annee", annee)
         .execute()
     )
 
-    if not resp_dep.data:
+    if not dep_resp.data:
         st.info("Aucune dépense pour cette année.")
         return
 
-    df_dep = pd.DataFrame(resp_dep.data)
+    df_dep = pd.DataFrame(dep_resp.data)
 
-    df_dep["montant_ttc"] = pd.to_numeric(df_dep["montant_ttc"], errors="coerce").fillna(0)
-    df_dep["date"] = pd.to_datetime(df_dep["date"], errors="coerce")
-
-    # =========================
-    # CRÉATION COLONNE SÉCURISÉE
-    # =========================
-    df_dep["groupe_charges"] = "Non affecté"
-
-    # =========================
-    # PLAN COMPTABLE
-    # =========================
-    resp_plan = (
+    plan_resp = (
         supabase
         .table("plan_comptable")
         .select("compte_8, groupe_charges")
         .execute()
     )
 
-    if resp_plan.data:
-        df_plan = pd.DataFrame(resp_plan.data)
+    df_plan = pd.DataFrame(plan_resp.data)
 
-        df_dep = df_dep.merge(
-            df_plan,
-            left_on="compte",
-            right_on="compte_8",
-            how="left"
-        )
+    # ======================================================
+    # JOINTURE PLAN COMPTABLE → GROUPE DE CHARGES
+    # ======================================================
+    df = df_dep.merge(
+        df_plan,
+        how="left",
+        left_on="compte",
+        right_on="compte_8"
+    )
 
-        # on écrase la valeur par défaut si trouvée
-        df_dep["groupe_charges"] = df_dep["groupe_charges_y"].fillna(df_dep["groupe_charges_x"])
+    df["groupe_charges"] = (
+        df["groupe_charges"]
+        .fillna("Non affecté")
+        .astype(str)
+    )
 
-        # nettoyage colonnes techniques
-        df_dep.drop(
-            columns=[c for c in df_dep.columns if c.endswith("_x") or c.endswith("_y") or c == "compte_8"],
-            inplace=True,
-            errors="ignore"
-        )
-
-    df = df_dep.copy()
-
-    # =========================
+    # ======================================================
     # FILTRES
-    # =========================
+    # ======================================================
     st.subheader("🔎 Filtres")
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        groupes = ["Tous"] + sorted(df["groupe_charges"].astype(str).unique().tolist())
+        groupes = ["Tous"] + sorted(df["groupe_charges"].unique().tolist())
         groupe_sel = st.selectbox("Groupe de charges", groupes)
 
     with col2:
-        fournisseurs = ["Tous"] + sorted(df["fournisseur"].dropna().astype(str).unique().tolist())
+        fournisseurs = ["Tous"] + sorted(
+            df["fournisseur"].dropna().unique().tolist()
+        )
         fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
 
     with col3:
-        comptes = ["Tous"] + sorted(df["compte"].dropna().astype(str).unique().tolist())
-        compte_sel = st.selectbox("Compte", comptes)
+        postes = ["Tous"] + sorted(
+            df["poste"].dropna().unique().tolist()
+        )
+        poste_sel = st.selectbox("Poste", postes)
 
     df_f = df.copy()
 
@@ -96,28 +84,24 @@ def depenses_ui(supabase, annee):
     if fournisseur_sel != "Tous":
         df_f = df_f[df_f["fournisseur"] == fournisseur_sel]
 
-    if compte_sel != "Tous":
-        df_f = df_f[df_f["compte"] == compte_sel]
+    if poste_sel != "Tous":
+        df_f = df_f[df_f["poste"] == poste_sel]
 
-    if df_f.empty:
-        st.warning("Aucune dépense après filtres.")
-        return
-
-    # =========================
+    # ======================================================
     # KPI
-    # =========================
+    # ======================================================
     total = df_f["montant_ttc"].sum()
     nb = len(df_f)
     moyenne = total / nb if nb else 0
 
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Total dépenses", euro(total))
-    k2.metric("Nombre d’écritures", nb)
-    k3.metric("Dépense moyenne", euro(moyenne))
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total dépenses", euro(total))
+    c2.metric("Nombre de lignes", nb)
+    c3.metric("Dépense moyenne", euro(moyenne))
 
-    # =========================
+    # ======================================================
     # TABLEAU PAR GROUPE DE CHARGES
-    # =========================
+    # ======================================================
     st.subheader("📊 Dépenses par groupe de charges")
 
     df_group = (
@@ -141,22 +125,37 @@ def depenses_ui(supabase, annee):
         use_container_width=True
     )
 
-    # =========================
-    # DÉTAIL
-    # =========================
+    # ======================================================
+    # DÉTAIL DES DÉPENSES
+    # ======================================================
     st.subheader("📋 Détail des dépenses")
 
-    df_detail = df_f.copy()
-    df_detail["date"] = df_detail["date"].dt.date
-
-    st.dataframe(
-        df_detail[[
+    df_detail = (
+        df_f[[
             "date",
             "compte",
             "poste",
             "fournisseur",
             "groupe_charges",
-            "montant_ttc"
-        ]].sort_values("date"),
+            "montant_ttc",
+            "lot_id",
+            "commentaire"
+        ]]
+        .sort_values("date")
+    )
+
+    df_detail["montant_ttc"] = df_detail["montant_ttc"].apply(euro)
+
+    st.dataframe(
+        df_detail.rename(columns={
+            "date": "Date",
+            "compte": "Compte",
+            "poste": "Poste",
+            "fournisseur": "Fournisseur",
+            "groupe_charges": "Groupe de charges",
+            "montant_ttc": "Montant TTC",
+            "lot_id": "Lot",
+            "commentaire": "Commentaire"
+        }),
         use_container_width=True
     )
