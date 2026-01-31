@@ -48,3 +48,4 @@ def budgets_ui(supabase, annee):
 
             st.success("✅ Budgets mis à jour")
             st.rerun()
+
