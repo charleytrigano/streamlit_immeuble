@@ -12,7 +12,7 @@ try:
     from lots_ui import lots_ui
     from repartition_lots_ui import repartition_lots_ui
     from charges_par_lot_ui import charges_par_lot_ui
-    from appels_fonds_trimestriels_ui import appels_fonds_trimestres_ui
+    from appels_fonds_trimestres_ui import appels_fonds_trimestriels_ui
     from controle_repartition_ui import controle_repartition_ui
     from plan_comptable_ui import plan_comptable_ui
 
