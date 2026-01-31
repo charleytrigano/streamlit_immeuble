@@ -13,7 +13,7 @@ def depenses_ui(supabase, annee):
     st.header(f"📄 Dépenses – {annee}")
 
     # ======================================================
-    # CHARGEMENT DES DÉPENSES
+    # CHARGEMENT DEPENSES
     # ======================================================
     dep_resp = (
         supabase
@@ -32,7 +32,7 @@ def depenses_ui(supabase, annee):
     df_dep = pd.DataFrame(dep_resp.data)
 
     # ======================================================
-    # CHARGEMENT PLAN COMPTABLE (GROUPES DE CHARGES)
+    # CHARGEMENT PLAN COMPTABLE
     # ======================================================
     plan_resp = (
         supabase
@@ -54,13 +54,13 @@ def depenses_ui(supabase, annee):
     )
 
     # ======================================================
-    # NORMALISATION GROUPE_CHARGES (POINT CRITIQUE)
+    # NORMALISATION ABSOLUE (POINT CLÉ)
     # ======================================================
     df["groupe_charges"] = (
         df["groupe_charges"]
-        .fillna(0)              # NULL → 0
-        .astype(int)            # sécurité
-        .astype(str)            # TRI SAFE
+        .fillna(0)
+        .astype(int)
+        .astype(str)
     )
 
     # ======================================================
@@ -71,18 +71,18 @@ def depenses_ui(supabase, annee):
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        groupes = ["Tous"] + sorted(df["groupe_charges"].unique().tolist())
+        groupes = ["Tous"] + sorted(df["groupe_charges"].unique())
         groupe_sel = st.selectbox("Groupe de charges", groupes)
 
     with col2:
         fournisseurs = ["Tous"] + sorted(
-            df["fournisseur"].dropna().astype(str).unique().tolist()
+            df["fournisseur"].dropna().astype(str).unique()
         )
         fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
 
     with col3:
         postes = ["Tous"] + sorted(
-            df["poste"].dropna().astype(str).unique().tolist()
+            df["poste"].dropna().astype(str).unique()
         )
         poste_sel = st.selectbox("Poste", postes)
 
@@ -121,8 +121,10 @@ def depenses_ui(supabase, annee):
             montant_total=("montant_ttc", "sum"),
             nb_lignes=("depense_id", "count")
         )
-        .sort_values("groupe_charges")
     )
+
+    # TRI SAFE (string → string)
+    df_group = df_group.sort_values("groupe_charges")
 
     df_group["montant_total"] = df_group["montant_total"].apply(euro)
 
@@ -136,25 +138,24 @@ def depenses_ui(supabase, annee):
     )
 
     # ======================================================
-    # DÉTAIL DES DÉPENSES
+    # DETAIL DES DEPENSES
     # ======================================================
     st.subheader("📋 Détail des dépenses")
 
-    df_detail = (
-        df_f[[
-            "date",
-            "compte",
-            "poste",
-            "fournisseur",
-            "groupe_charges",
-            "montant_ttc",
-            "lot_id",
-            "commentaire"
-        ]]
-        .sort_values("date")
-    )
+    df_detail = df_f[[
+        "date",
+        "compte",
+        "poste",
+        "fournisseur",
+        "groupe_charges",
+        "montant_ttc",
+        "lot_id",
+        "commentaire"
+    ]].copy()
 
     df_detail["montant_ttc"] = df_detail["montant_ttc"].apply(euro)
+
+    df_detail = df_detail.sort_values("date")
 
     st.dataframe(
         df_detail.rename(columns={
