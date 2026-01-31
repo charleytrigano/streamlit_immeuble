@@ -1,7 +1,4 @@
-streamlit
-pandas
-openpyxl
-pypdf
-reportlab
-supabase
-plotly
+streamlit>=1.30
+supabase>=2.4.0
+python-dotenv>=1.0.0
+pandas>=2.0
