@@ -1,10 +1,8 @@
-COMPTE_TO_POSTE = {
-    "Entretien plomberie": "Entretien – Plomberie",
-    "Entretien serrurerie": "Entretien – Serrurerie",
-    "Contrat entretien ascenseur": "Contrat – Ascenseur",
-    "Electricite Ascenseur 35%": "Énergie – Ascenseur",
-    "Eau": "Eau",
-    "Assurances": "Assurances",
-    "Honoraires Syndic": "Honoraires – Syndic",
-}
+import streamlit as st
+from supabase import create_client
 
+
+def get_supabase_client():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_ANON_KEY"]
+    return create_client(url, key)
