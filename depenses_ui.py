@@ -10,9 +10,9 @@ def depenses_ui(supabase, annee):
     st.header(f"📄 Dépenses – {annee}")
 
     # =========================
-    # CHARGEMENT DES DÉPENSES
+    # CHARGEMENT DÉPENSES
     # =========================
-    resp = (
+    dep_resp = (
         supabase
         .table("depenses")
         .select("""
@@ -28,14 +28,14 @@ def depenses_ui(supabase, annee):
         .execute()
     )
 
-    if not resp.data:
+    if not dep_resp.data:
         st.info("Aucune dépense pour cette année.")
         return
 
-    df = pd.DataFrame(resp.data)
+    df = pd.DataFrame(dep_resp.data)
 
     # =========================
-    # PLAN COMPTABLE (GROUPES)
+    # PLAN COMPTABLE (groupes)
     # =========================
     plan_resp = (
         supabase
@@ -50,7 +50,6 @@ def depenses_ui(supabase, annee):
 
     df_plan = pd.DataFrame(plan_resp.data)
 
-    # jointure pour récupérer groupe de charges
     df = df.merge(
         df_plan,
         left_on="compte",
@@ -59,9 +58,9 @@ def depenses_ui(supabase, annee):
     )
 
     # =========================
-    # LIBELLÉ DES GROUPES
+    # LIBELLÉS DES GROUPES
     # =========================
-    groupe_map = {
+    groupes = {
         1: "Charges communes générales",
         2: "Charges spéciales RDC / sous-sols",
         3: "Charges spéciales sous-sols",
@@ -70,7 +69,7 @@ def depenses_ui(supabase, annee):
         6: "Monte-voitures",
     }
 
-    df["groupe_charges_label"] = df["groupe_charges"].map(groupe_map)
+    df["groupe_charges_label"] = df["groupe_charges"].map(groupes)
 
     # =========================
     # FILTRES
@@ -79,53 +78,53 @@ def depenses_ui(supabase, annee):
 
     col1, col2, col3 = st.columns(3)
 
-    groupes = sorted(df["groupe_charges_label"].dropna().unique().tolist())
-    comptes = sorted(df["compte"].dropna().unique().tolist())
-    fournisseurs = sorted(df["fournisseur"].dropna().unique().tolist())
+    f_groupes = sorted(df["groupe_charges_label"].dropna().unique())
+    f_comptes = sorted(df["compte"].dropna().unique())
+    f_fournisseurs = sorted(df["fournisseur"].dropna().unique())
 
-    filtre_groupes = col1.multiselect(
+    sel_groupes = col1.multiselect(
         "Groupe de charges",
-        ["Tous"] + groupes,
+        ["Tous"] + f_groupes,
         default=["Tous"]
     )
 
-    filtre_comptes = col2.multiselect(
+    sel_comptes = col2.multiselect(
         "Compte",
-        ["Tous"] + comptes,
+        ["Tous"] + f_comptes,
         default=["Tous"]
     )
 
-    filtre_fournisseurs = col3.multiselect(
+    sel_fournisseurs = col3.multiselect(
         "Fournisseur",
-        ["Tous"] + fournisseurs,
+        ["Tous"] + f_fournisseurs,
         default=["Tous"]
     )
 
     df_f = df.copy()
 
-    if "Tous" not in filtre_groupes:
-        df_f = df_f[df_f["groupe_charges_label"].isin(filtre_groupes)]
+    if "Tous" not in sel_groupes:
+        df_f = df_f[df_f["groupe_charges_label"].isin(sel_groupes)]
 
-    if "Tous" not in filtre_comptes:
-        df_f = df_f[df_f["compte"].isin(filtre_comptes)]
+    if "Tous" not in sel_comptes:
+        df_f = df_f[df_f["compte"].isin(sel_comptes)]
 
-    if "Tous" not in filtre_fournisseurs:
-        df_f = df_f[df_f["fournisseur"].isin(filtre_fournisseurs)]
+    if "Tous" not in sel_fournisseurs:
+        df_f = df_f[df_f["fournisseur"].isin(sel_fournisseurs)]
 
     # =========================
     # KPI
     # =========================
     total = df_f["montant_ttc"].sum()
     nb = len(df_f)
-    moyenne = total / nb if nb > 0 else 0
+    moy = total / nb if nb else 0
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Total dépenses", euro(total))
     c2.metric("Nombre de lignes", nb)
-    c3.metric("Dépense moyenne", euro(moyenne))
+    c3.metric("Dépense moyenne", euro(moy))
 
     # =========================
-    # TABLEAU DES DÉPENSES
+    # TABLEAU DÉTAIL
     # =========================
     st.markdown("### 📋 Détail des dépenses")
 
