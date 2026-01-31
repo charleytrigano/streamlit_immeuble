@@ -2,7 +2,7 @@ import streamlit as st
 from supabase import create_client
 
 from utils.depenses_ui import depenses_ui
-from utils.budgets_ui import budgets_ui          # 👈 retour du module Budget
+from utils.budget_ui import budget_ui          # 👈 retour du module Budget
 from utils.plan_comptable_ui import plan_comptable_ui
 from utils.lots_ui import lots_ui
 from utils.repartition_lots_ui import repartition_lots_ui
