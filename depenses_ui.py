@@ -13,38 +13,70 @@ def depenses_ui(supabase, annee):
     st.header(f"📄 Dépenses – {annee}")
 
     # ======================================================
-    # CHARGEMENT DONNÉES ENRICHIES (BASE UNIQUE)
+    # CHARGEMENT DÉPENSES
     # ======================================================
-    resp = (
+    dep_resp = (
         supabase
-        .table("v_depenses_enrichies")
-        .select("*")
+        .table("depenses")
+        .select("""
+            depense_id,
+            annee,
+            date,
+            compte,
+            poste,
+            fournisseur,
+            montant_ttc,
+            lot_id,
+            commentaire
+        """)
         .eq("annee", annee)
         .execute()
     )
 
-    if not resp.data:
+    if not dep_resp.data:
         st.warning("Aucune dépense pour cette année.")
         return
 
-    df = pd.DataFrame(resp.data)
+    df_dep = pd.DataFrame(dep_resp.data)
+
+    # ======================================================
+    # PLAN COMPTABLE (pour groupe_charges)
+    # ======================================================
+    plan_resp = (
+        supabase
+        .table("plan_comptable")
+        .select("compte_8, groupe_charges, libelle")
+        .execute()
+    )
+
+    df_plan = pd.DataFrame(plan_resp.data)
+
+    # ======================================================
+    # ENRICHISSEMENT
+    # ======================================================
+    df = df_dep.merge(
+        df_plan,
+        left_on="compte",
+        right_on="compte_8",
+        how="left"
+    )
 
     # ======================================================
     # FILTRES
     # ======================================================
     st.subheader("🔎 Filtres")
 
-    colf1, colf2, colf3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
 
-    with colf1:
+    with c1:
         groupes = ["Tous"] + sorted(df["groupe_charges"].dropna().unique().tolist())
         groupe_sel = st.selectbox("Groupe de charges", groupes)
 
-    with colf2:
+    with c2:
         comptes = ["Tous"] + sorted(df["compte"].dropna().unique().tolist())
         compte_sel = st.selectbox("Compte", comptes)
 
-    with colf3:
+    with c3:
         fournisseurs = ["Tous"] + sorted(df["fournisseur"].dropna().unique().tolist())
         fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
 
@@ -64,30 +96,23 @@ def depenses_ui(supabase, annee):
     # ======================================================
     st.subheader("📊 Indicateurs")
 
-    total_dep = df_f["montant_ttc"].sum()
-    nb_dep = len(df_f)
-    dep_moy = total_dep / nb_dep if nb_dep else 0
+    total = df_f["montant_ttc"].sum()
+    nb = len(df_f)
+    moy = total / nb if nb else 0
 
     k1, k2, k3 = st.columns(3)
-    k1.metric("Total dépenses", euro(total_dep))
-    k2.metric("Nombre de lignes", nb_dep)
-    k3.metric("Dépense moyenne", euro(dep_moy))
+    k1.metric("Total dépenses", euro(total))
+    k2.metric("Nombre de lignes", nb)
+    k3.metric("Dépense moyenne", euro(moy))
 
     # ======================================================
     # ONGLET DÉTAIL / AJOUT
     # ======================================================
-    tab_detail, tab_add = st.tabs([
-        "📋 Détail des dépenses",
-        "➕ Ajouter une dépense"
-    ])
+    tab_detail, tab_add = st.tabs(["📋 Détail", "➕ Ajouter"])
 
-    # ======================================================
-    # DÉTAIL + MODIFICATION / SUPPRESSION
-    # ======================================================
+    # ------------------ DÉTAIL / MODIFIER / SUPPRIMER
     with tab_detail:
-        st.subheader("📋 Détail")
-
-        cols = [
+        df_view = df_f[[
             "depense_id",
             "date",
             "compte",
@@ -97,73 +122,56 @@ def depenses_ui(supabase, annee):
             "lot_id",
             "commentaire",
             "groupe_charges",
-            "libelle_compte",
-        ]
+            "libelle"
+        ]].sort_values("date")
 
-        df_view = df_f[cols].sort_values("date")
-
-        edited_df = st.data_editor(
+        edited = st.data_editor(
             df_view,
             use_container_width=True,
-            num_rows="fixed",
-            key="depenses_editor"
+            num_rows="fixed"
         )
 
         if st.button("💾 Enregistrer les modifications"):
-            for _, row in edited_df.iterrows():
+            for _, r in edited.iterrows():
                 supabase.table("depenses").update({
-                    "date": row["date"],
-                    "compte": row["compte"],
-                    "poste": row["poste"],
-                    "fournisseur": row["fournisseur"],
-                    "montant_ttc": row["montant_ttc"],
-                    "lot_id": row["lot_id"],
-                    "commentaire": row["commentaire"],
-                }).eq("depense_id", row["depense_id"]).execute()
+                    "date": r["date"],
+                    "compte": r["compte"],
+                    "poste": r["poste"],
+                    "fournisseur": r["fournisseur"],
+                    "montant_ttc": r["montant_ttc"],
+                    "lot_id": r["lot_id"],
+                    "commentaire": r["commentaire"],
+                }).eq("depense_id", r["depense_id"]).execute()
 
-            st.success("✅ Modifications enregistrées")
+            st.success("Modifications enregistrées")
             st.rerun()
 
         st.divider()
 
-        st.subheader("🗑 Supprimer une dépense")
-
         dep_del = st.selectbox(
-            "Sélection",
-            df_view["depense_id"],
-            format_func=lambda x: f"Dépense {x}"
+            "Supprimer une dépense",
+            df_view["depense_id"]
         )
 
-        if st.button("❌ Supprimer définitivement"):
+        if st.button("❌ Supprimer"):
             supabase.table("depenses").delete().eq(
                 "depense_id", dep_del
             ).execute()
             st.success("Dépense supprimée")
             st.rerun()
 
-    # ======================================================
-    # AJOUT
-    # ======================================================
+    # ------------------ AJOUT
     with tab_add:
-        st.subheader("➕ Nouvelle dépense")
-
         with st.form("add_depense"):
-            c1, c2 = st.columns(2)
+            d_date = st.date_input("Date", value=date.today())
+            d_compte = st.text_input("Compte")
+            d_poste = st.text_input("Poste")
+            d_fournisseur = st.text_input("Fournisseur")
+            d_montant = st.number_input("Montant TTC", min_value=0.0)
+            d_lot = st.number_input("Lot ID", min_value=0)
+            d_commentaire = st.text_area("Commentaire")
 
-            with c1:
-                d_date = st.date_input("Date", value=date.today())
-                d_compte = st.text_input("Compte")
-                d_poste = st.text_input("Poste")
-                d_fournisseur = st.text_input("Fournisseur")
-
-            with c2:
-                d_montant = st.number_input("Montant TTC", min_value=0.0, step=10.0)
-                d_lot = st.number_input("Lot ID", min_value=0, step=1)
-                d_commentaire = st.text_area("Commentaire")
-
-            submit = st.form_submit_button("💾 Ajouter")
-
-            if submit:
+            if st.form_submit_button("Ajouter"):
                 supabase.table("depenses").insert({
                     "annee": annee,
                     "date": d_date,
@@ -175,7 +183,7 @@ def depenses_ui(supabase, annee):
                     "commentaire": d_commentaire,
                 }).execute()
 
-                st.success("✅ Dépense ajoutée")
+                st.success("Dépense ajoutée")
                 st.rerun()
 
     # ======================================================
@@ -183,21 +191,13 @@ def depenses_ui(supabase, annee):
     # ======================================================
     st.subheader("📊 Dépenses par groupe de charges")
 
-    df_group = (
+    recap = (
         df_f
         .groupby("groupe_charges", as_index=False)
         .agg(
             total=("montant_ttc", "sum"),
             nb=("montant_ttc", "count")
         )
-        .sort_values("groupe_charges")
     )
 
-    st.dataframe(
-        df_group.rename(columns={
-            "groupe_charges": "Groupe de charges",
-            "total": "Total (€)",
-            "nb": "Nombre de dépenses"
-        }),
-        use_container_width=True
-    )
+    st.dataframe(recap, use_container_width=True)
