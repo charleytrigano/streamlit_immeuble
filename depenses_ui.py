@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
 
 
 def euro(x):
@@ -8,189 +7,145 @@ def euro(x):
 
 
 def depenses_ui(supabase, annee):
-    st.header("📄 Dépenses")
+    st.header(f"📄 Dépenses – {annee}")
 
     # ======================================================
-    # CHARGEMENT DES DONNÉES
+    # CHARGEMENT DES DONNÉES (VUE ENRICHIE UNIQUEMENT)
     # ======================================================
-    dep_resp = (
+    resp = (
         supabase
-        .table("depenses")
+        .table("v_depenses_enrichies")
         .select("*")
         .eq("annee", annee)
         .execute()
     )
 
-    plan_resp = (
-        supabase
-        .table("plan_comptable")
-        .select("compte_8, libelle, groupe_charges")
-        .execute()
-    )
-
-    if not dep_resp.data:
-        st.warning("Aucune dépense pour cette année.")
+    if not resp.data:
+        st.info("Aucune dépense pour cette année.")
         return
 
-    df_dep = pd.DataFrame(dep_resp.data)
-    df_plan = pd.DataFrame(plan_resp.data)
+    df = pd.DataFrame(resp.data)
 
-    # ======================================================
-    # ENRICHISSEMENT (jointure maîtrisée)
-    # ======================================================
-    df = df_dep.merge(
-        df_plan,
-        left_on="compte",
-        right_on="compte_8",
-        how="left"
-    )
+    # Sécurités
+    df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce").fillna(0)
 
     # ======================================================
     # FILTRES
     # ======================================================
     st.subheader("🔎 Filtres")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         groupes = ["Tous"] + sorted(df["groupe_charges"].dropna().unique().tolist())
         groupe_sel = st.selectbox("Groupe de charges", groupes)
 
     with col2:
-        comptes = ["Tous"] + sorted(df["compte"].dropna().unique().tolist())
+        comptes = (
+            ["Tous"]
+            + sorted(
+                df[["compte", "libelle_compte"]]
+                .dropna()
+                .drop_duplicates()
+                .apply(
+                    lambda x: f"{x['compte']} – {x['libelle_compte']}",
+                    axis=1
+                )
+                .tolist()
+            )
+        )
         compte_sel = st.selectbox("Compte", comptes)
 
     with col3:
         fournisseurs = ["Tous"] + sorted(df["fournisseur"].dropna().unique().tolist())
         fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
 
+    with col4:
+        postes = ["Tous"] + sorted(df["poste"].dropna().unique().tolist())
+        poste_sel = st.selectbox("Poste", postes)
+
+    # ======================================================
+    # APPLICATION DES FILTRES
+    # ======================================================
+    df_f = df.copy()
+
     if groupe_sel != "Tous":
-        df = df[df["groupe_charges"] == groupe_sel]
+        df_f = df_f[df_f["groupe_charges"] == groupe_sel]
 
     if compte_sel != "Tous":
-        df = df[df["compte"] == compte_sel]
+        compte_code = compte_sel.split(" – ")[0]
+        df_f = df_f[df_f["compte"] == compte_code]
 
     if fournisseur_sel != "Tous":
-        df = df[df["fournisseur"] == fournisseur_sel]
+        df_f = df_f[df_f["fournisseur"] == fournisseur_sel]
+
+    if poste_sel != "Tous":
+        df_f = df_f[df_f["poste"] == poste_sel]
 
     # ======================================================
     # KPI
     # ======================================================
-    st.subheader("📊 Indicateurs")
-
-    total = df["montant_ttc"].sum()
-    nb = len(df)
-    moyenne = total / nb if nb > 0 else 0
+    total_dep = df_f["montant_ttc"].sum()
+    nb_lignes = len(df_f)
+    dep_moy = total_dep / nb_lignes if nb_lignes else 0
 
     k1, k2, k3 = st.columns(3)
-    k1.metric("Total dépenses", euro(total))
-    k2.metric("Nombre d'écritures", nb)
-    k3.metric("Montant moyen", euro(moyenne))
+    k1.metric("💸 Total dépenses", euro(total_dep))
+    k2.metric("🧾 Nombre de lignes", nb_lignes)
+    k3.metric("📊 Dépense moyenne", euro(dep_moy))
 
     # ======================================================
-    # TABLEAU DÉTAIL (lecture)
+    # DÉPENSES PAR GROUPE DE CHARGES
     # ======================================================
-    st.subheader("📋 Détail des dépenses")
+    st.subheader("📊 Dépenses par groupe de charges")
 
-    cols_affichees = [
-        "date",
-        "compte",
-        "libelle",
-        "poste",
-        "fournisseur",
-        "montant_ttc",
-        "groupe_charges",
-        "commentaire",
-    ]
+    df_group = (
+        df_f
+        .groupby(["groupe_charges"], as_index=False)
+        .agg(
+            total=("montant_ttc", "sum"),
+            nb=("depense_id", "count")
+        )
+        .sort_values("groupe_charges")
+    )
+
+    df_group["total"] = df_group["total"].apply(euro)
 
     st.dataframe(
-        df[cols_affichees].sort_values("date"),
+        df_group.rename(columns={
+            "groupe_charges": "Groupe de charges",
+            "total": "Total (€)",
+            "nb": "Nb lignes"
+        }),
         use_container_width=True
     )
 
     # ======================================================
-    # AJOUT DÉPENSE
+    # DÉTAIL DES DÉPENSES
     # ======================================================
-    st.subheader("➕ Ajouter une dépense")
+    st.subheader("📋 Détail des dépenses")
 
-    with st.form("add_depense"):
-        c1, c2, c3 = st.columns(3)
+    df_detail = df_f[[
+        "date",
+        "compte",
+        "libelle_compte",
+        "poste",
+        "fournisseur",
+        "montant_ttc",
+        "groupe_charges"
+    ]].copy()
 
-        with c1:
-            d_date = st.date_input("Date", value=date.today())
-            d_compte = st.selectbox("Compte", sorted(df_plan["compte_8"].unique()))
+    df_detail["montant_ttc"] = df_detail["montant_ttc"].apply(euro)
 
-        with c2:
-            d_poste = st.text_input("Poste")
-            d_fournisseur = st.text_input("Fournisseur")
-
-        with c3:
-            d_montant = st.number_input("Montant TTC", min_value=0.0, step=10.0)
-
-        d_commentaire = st.text_area("Commentaire")
-
-        submitted = st.form_submit_button("💾 Ajouter")
-
-        if submitted:
-            supabase.table("depenses").insert({
-                "annee": annee,
-                "date": d_date.isoformat(),
-                "compte": d_compte,
-                "poste": d_poste,
-                "fournisseur": d_fournisseur,
-                "montant_ttc": d_montant,
-                "commentaire": d_commentaire,
-            }).execute()
-
-            st.success("Dépense ajoutée")
-            st.rerun()
-
-    # ======================================================
-    # MODIFICATION / SUPPRESSION
-    # ======================================================
-    st.subheader("✏️ Modifier / 🗑 Supprimer")
-
-    depense_ids = df["depense_id"].tolist() if "depense_id" in df.columns else df["id"].tolist()
-    id_sel = st.selectbox("Sélectionner une dépense", depense_ids)
-
-    dep = df[df["depense_id"] == id_sel].iloc[0]
-
-    with st.form("edit_depense"):
-        e1, e2, e3 = st.columns(3)
-
-        with e1:
-            e_date = st.date_input("Date", pd.to_datetime(dep["date"]))
-            e_compte = st.selectbox(
-                "Compte",
-                sorted(df_plan["compte_8"].unique()),
-                index=list(df_plan["compte_8"]).index(dep["compte"])
-            )
-
-        with e2:
-            e_poste = st.text_input("Poste", dep["poste"])
-            e_fournisseur = st.text_input("Fournisseur", dep["fournisseur"])
-
-        with e3:
-            e_montant = st.number_input("Montant TTC", value=float(dep["montant_ttc"]), step=10.0)
-
-        e_commentaire = st.text_area("Commentaire", dep["commentaire"])
-
-        col_save, col_del = st.columns(2)
-
-        if col_save.form_submit_button("💾 Enregistrer"):
-            supabase.table("depenses").update({
-                "date": e_date.isoformat(),
-                "compte": e_compte,
-                "poste": e_poste,
-                "fournisseur": e_fournisseur,
-                "montant_ttc": e_montant,
-                "commentaire": e_commentaire,
-            }).eq("id", id_sel).execute()
-
-            st.success("Dépense mise à jour")
-            st.rerun()
-
-        if col_del.form_submit_button("🗑 Supprimer"):
-            supabase.table("depenses").delete().eq("id", id_sel).execute()
-            st.warning("Dépense supprimée")
-            st.rerun()
+    st.dataframe(
+        df_detail.rename(columns={
+            "date": "Date",
+            "compte": "Compte",
+            "libelle_compte": "Libellé compte",
+            "poste": "Poste",
+            "fournisseur": "Fournisseur",
+            "montant_ttc": "Montant TTC",
+            "groupe_charges": "Groupe de charges"
+        }),
+        use_container_width=True
+    )
