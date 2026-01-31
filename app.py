@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from supabase_client import supabase
+from supabase_client import get_supabase
 
 # ======================================================
 # CONFIG
@@ -11,6 +11,11 @@ st.set_page_config(
 )
 
 st.title("📊 Pilotage des charges – Dépenses")
+
+# ======================================================
+# SUPABASE
+# ======================================================
+supabase = get_supabase()
 
 # ======================================================
 # CHARGEMENT DES DONNÉES
@@ -32,7 +37,7 @@ if df.empty:
     st.stop()
 
 # ======================================================
-# FILTRES GLOBAUX
+# FILTRES
 # ======================================================
 st.sidebar.header("🔎 Filtres")
 
@@ -48,13 +53,13 @@ groupe_compte_sel = st.sidebar.selectbox("Groupe de compte", groupes_compte)
 # ======================================================
 # APPLICATION DES FILTRES
 # ======================================================
-df_filtree = df[df["annee"] == annee_sel]
+df_f = df[df["annee"] == annee_sel]
 
 if groupe_charges_sel != "Tous":
-    df_filtree = df_filtree[df_filtree["groupe_charges"] == groupe_charges_sel]
+    df_f = df_f[df_f["groupe_charges"] == groupe_charges_sel]
 
 if groupe_compte_sel != "Tous":
-    df_filtree = df_filtree[df_filtree["groupe_compte"] == groupe_compte_sel]
+    df_f = df_f[df_f["groupe_compte"] == groupe_compte_sel]
 
 # ======================================================
 # ONGLET
@@ -65,46 +70,35 @@ tab1, tab2 = st.tabs([
 ])
 
 # ======================================================
-# ONGLET 1 — AGRÉGATION
+# ONGLET 1
 # ======================================================
 with tab1:
-    st.subheader("💰 Dépenses par groupe de charges")
-
     df_group = (
-        df_filtree
+        df_f
         .groupby("groupe_charges", as_index=False)["montant_ttc"]
         .sum()
         .rename(columns={"montant_ttc": "total_depenses"})
         .sort_values("total_depenses", ascending=False)
     )
 
-    st.dataframe(
-        df_group,
-        use_container_width=True
-    )
-
-    st.metric(
-        "Total général",
-        f"{df_group['total_depenses'].sum():,.2f} €"
-    )
+    st.dataframe(df_group, use_container_width=True)
+    st.metric("Total général", f"{df_group['total_depenses'].sum():,.2f} €")
 
 # ======================================================
-# ONGLET 2 — DÉTAIL
+# ONGLET 2
 # ======================================================
 with tab2:
-    st.subheader("📋 Détail des dépenses")
-
-    colonnes = [
-        "date",
-        "compte",
-        "libelle_compte",
-        "poste",
-        "groupe_charges",
-        "groupe_compte",
-        "montant_ttc"
-    ]
-
     st.dataframe(
-        df_filtree[colonnes].sort_values("date"),
+        df_f[
+            [
+                "date",
+                "compte",
+                "libelle_compte",
+                "poste",
+                "groupe_charges",
+                "groupe_compte",
+                "montant_ttc",
+            ]
+        ].sort_values("date"),
         use_container_width=True
     )
