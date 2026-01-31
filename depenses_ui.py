@@ -13,7 +13,7 @@ def depenses_ui(supabase, annee):
     st.header(f"📄 Dépenses – {annee}")
 
     # ======================================================
-    # DÉPENSES
+    # CHARGEMENT DES DÉPENSES
     # ======================================================
     dep_resp = (
         supabase
@@ -32,7 +32,7 @@ def depenses_ui(supabase, annee):
     df_dep = pd.DataFrame(dep_resp.data)
 
     # ======================================================
-    # PLAN COMPTABLE
+    # CHARGEMENT PLAN COMPTABLE
     # ======================================================
     plan_resp = (
         supabase
@@ -57,7 +57,7 @@ def depenses_ui(supabase, annee):
         df = df_dep.copy()
 
     # ======================================================
-    # 🔐 SÉCURISATION ABSOLUE DES COLONNES
+    # SÉCURISATION DES COLONNES
     # ======================================================
     if "groupe_charges" not in df.columns:
         df["groupe_charges"] = "Non affecté"
@@ -66,26 +66,42 @@ def depenses_ui(supabase, annee):
         df["libelle"] = ""
 
     df["groupe_charges"] = df["groupe_charges"].fillna("Non affecté")
+    df["fournisseur"] = df["fournisseur"].fillna("")
 
     # ======================================================
     # FILTRES
     # ======================================================
     st.subheader("🔎 Filtres")
 
-    colf1, colf2, colf3 = st.columns(3)
+    col1, col2, col3 = st.columns(3)
 
-    with colf1:
-        fournisseurs = ["Tous"] + sorted(df["fournisseur"].dropna().unique().tolist())
-        fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
+    with col1:
+        fournisseurs = ["Tous"] + sorted(df["fournisseur"].unique().tolist())
+        fournisseur_sel = st.selectbox(
+            "Fournisseur",
+            fournisseurs,
+            key="filtre_fournisseur_depenses"
+        )
 
-    with colf2:
+    with col2:
         groupes = ["Tous"] + sorted(df["groupe_charges"].astype(str).unique().tolist())
-        groupe_sel = st.selectbox("Groupe de charges", groupes)
+        groupe_sel = st.selectbox(
+            "Groupe de charges",
+            groupes,
+            key="filtre_groupe_charges_depenses"
+        )
 
-    with colf3:
+    with col3:
         comptes = ["Tous"] + sorted(df["compte"].dropna().unique().tolist())
-        compte_sel = st.selectbox("Compte comptable", comptes)
+        compte_sel = st.selectbox(
+            "Compte comptable",
+            comptes,
+            key="filtre_compte_depenses"
+        )
 
+    # ======================================================
+    # APPLICATION DES FILTRES
+    # ======================================================
     df_f = df.copy()
 
     if fournisseur_sel != "Tous":
@@ -110,7 +126,7 @@ def depenses_ui(supabase, annee):
     c3.metric("Dépense moyenne", euro(moy))
 
     # ======================================================
-    # TABLEAU
+    # TABLEAU DÉTAILLÉ
     # ======================================================
     st.subheader("📋 Détail des dépenses")
 
