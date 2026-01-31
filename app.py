@@ -12,3 +12,12 @@ st.success("✅ Supabase connecté")
 
 # Affichage direct de l’onglet (PAS DE MENU POUR L’INSTANT)
 appels_fonds_ui(supabase)
+
+import streamlit as st
+
+from plan_comptable_ui import plan_comptable_ui
+
+plan_comptable_ui(supabase)
+def plan_comptable_ui(supabase):
+    st.header("📘 Plan comptable")
+    st.info("Onglet plan comptable chargé correctement")
