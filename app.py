@@ -1,50 +1,77 @@
-
 import streamlit as st
 from supabase_client import get_supabase
 
-from depenses_ui import depenses_ui
-from budget_ui import budget_ui
-from budget_vs_reel_ui import budget_vs_reel_ui
-from plan_comptable_ui import plan_comptable_ui
+# -----------------------------
+# Configuration page
+# -----------------------------
+st.set_page_config(
+    page_title="Pilotage des charges",
+    layout="wide"
+)
 
-def main():
-    supabase = get_supabase()
+# -----------------------------
+# Connexion Supabase
+# -----------------------------
+supabase = get_supabase()
+st.success("✅ Supabase connecté correctement")
 
-    st.sidebar.header("🔎 Filtres globaux")
-    annee = st.sidebar.selectbox("Année", [2024, 2025], key="annee_globale")
+# -----------------------------
+# Filtres globaux
+# -----------------------------
+st.sidebar.title("🔎 Filtres globaux")
 
-    onglet = st.sidebar.radio(
-        "Navigation",
-        ["📄 Dépenses", "💰 Budget", "📊 Budget vs Réel", "📘 Plan comptable"],
-        key="nav_principale"
-    )
+annee = st.sidebar.selectbox(
+    "Année",
+    [2023, 2024, 2025],
+    index=2,
+    key="filtre_annee"
+)
 
-    if onglet == "📄 Dépenses":
-        depenses_ui(supabase, annee)
+# -----------------------------
+# Navigation principale
+# -----------------------------
+st.sidebar.title("📊 Pilotage des charges")
 
-    elif onglet == "💰 Budget":
-        budget_ui(supabase, annee)
+page = st.sidebar.radio(
+    "Navigation",
+    [
+        "📄 Dépenses",
+        "💰 Budget",
+        "📊 Budget vs Réel",
+        "📘 Plan comptable",
+    ],
+    key="navigation_principale"
+)
 
-    elif onglet == "📊 Budget vs Réel":
-        budget_vs_reel_ui(supabase, annee)
-
-    elif onglet == "📘 Plan comptable":
-        plan_comptable_ui(supabase)
-
-if __name__ == "__main__":
-    main()
-
-
-
-
-st.write("📂 CWD =", os.getcwd())
-st.write("📁 FICHIERS =", os.listdir("."))
-st.write("🐍 sys.path =", sys.path)
+# -----------------------------
+# Pages
+# -----------------------------
+def safe_import(module_name, func_name):
+    try:
+        module = __import__(module_name, fromlist=[func_name])
+        return getattr(module, func_name)
+    except Exception as e:
+        st.error(f"❌ Impossible de charger {module_name}.{func_name}")
+        st.exception(e)
+        return None
 
 
+if page == "📄 Dépenses":
+    ui = safe_import("depenses_ui", "depenses_ui")
+    if ui:
+        ui(supabase, annee)
 
+elif page == "💰 Budget":
+    ui = safe_import("budget_ui", "budget_ui")
+    if ui:
+        ui(supabase, annee)
 
-st.write("📁 Contenu du dossier courant :")
-st.write(os.listdir("."))
+elif page == "📊 Budget vs Réel":
+    ui = safe_import("budget_vs_reel_ui", "budget_vs_reel_ui")
+    if ui:
+        ui(supabase, annee)
 
-st.stop()
+elif page == "📘 Plan comptable":
+    ui = safe_import("plan_comptable_ui", "plan_comptable_ui")
+    if ui:
+        ui(supabase)
