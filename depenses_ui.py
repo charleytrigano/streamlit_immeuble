@@ -13,7 +13,7 @@ def depenses_ui(supabase, annee):
     st.header(f"📄 Dépenses – {annee}")
 
     # ======================================================
-    # CHARGEMENT DES DÉPENSES
+    # DÉPENSES
     # ======================================================
     dep_resp = (
         supabase
@@ -32,7 +32,7 @@ def depenses_ui(supabase, annee):
     df_dep = pd.DataFrame(dep_resp.data)
 
     # ======================================================
-    # CHARGEMENT PLAN COMPTABLE
+    # PLAN COMPTABLE
     # ======================================================
     plan_resp = (
         supabase
@@ -44,7 +44,7 @@ def depenses_ui(supabase, annee):
     df_plan = pd.DataFrame(plan_resp.data)
 
     # ======================================================
-    # JOINTURE SÉCURISÉE
+    # JOINTURE
     # ======================================================
     if not df_plan.empty:
         df = df_dep.merge(
@@ -55,12 +55,15 @@ def depenses_ui(supabase, annee):
         )
     else:
         df = df_dep.copy()
-        df["libelle"] = None
-        df["groupe_charges"] = None
 
-    # 🔐 GARANTIE ABSOLUE
+    # ======================================================
+    # 🔐 SÉCURISATION ABSOLUE DES COLONNES
+    # ======================================================
     if "groupe_charges" not in df.columns:
         df["groupe_charges"] = "Non affecté"
+
+    if "libelle" not in df.columns:
+        df["libelle"] = ""
 
     df["groupe_charges"] = df["groupe_charges"].fillna("Non affecté")
 
@@ -76,7 +79,7 @@ def depenses_ui(supabase, annee):
         fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
 
     with colf2:
-        groupes = ["Tous"] + sorted(df["groupe_charges"].unique().tolist())
+        groupes = ["Tous"] + sorted(df["groupe_charges"].astype(str).unique().tolist())
         groupe_sel = st.selectbox("Groupe de charges", groupes)
 
     with colf3:
@@ -97,60 +100,52 @@ def depenses_ui(supabase, annee):
     # ======================================================
     # KPI
     # ======================================================
-    total_dep = df_f["montant_ttc"].sum()
-    nb_lignes = len(df_f)
-    dep_moy = total_dep / nb_lignes if nb_lignes else 0
+    total = df_f["montant_ttc"].sum()
+    nb = len(df_f)
+    moy = total / nb if nb else 0
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total dépenses", euro(total_dep))
-    col2.metric("Nombre de lignes", nb_lignes)
-    col3.metric("Dépense moyenne", euro(dep_moy))
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total dépenses", euro(total))
+    c2.metric("Nombre de lignes", nb)
+    c3.metric("Dépense moyenne", euro(moy))
 
     # ======================================================
-    # TABLEAU DÉTAILLÉ
+    # TABLEAU
     # ======================================================
     st.subheader("📋 Détail des dépenses")
 
-    df_aff = df_f[[
-        "date",
-        "compte",
-        "libelle",
-        "poste",
-        "fournisseur",
-        "groupe_charges",
-        "montant_ttc",
-        "lot_id"
-    ]].rename(columns={
-        "date": "Date",
-        "compte": "Compte",
-        "libelle": "Libellé compte",
-        "poste": "Poste",
-        "fournisseur": "Fournisseur",
-        "groupe_charges": "Groupe de charges",
-        "montant_ttc": "Montant TTC",
-        "lot_id": "Lot"
-    }).sort_values("Date")
-
-    st.dataframe(df_aff, use_container_width=True)
+    st.dataframe(
+        df_f[[
+            "date",
+            "compte",
+            "libelle",
+            "poste",
+            "fournisseur",
+            "groupe_charges",
+            "montant_ttc",
+            "lot_id"
+        ]].sort_values("date"),
+        use_container_width=True
+    )
 
     # ======================================================
-    # DÉPENSES PAR GROUPE DE CHARGES
+    # AGRÉGATION PAR GROUPE DE CHARGES
     # ======================================================
     st.subheader("📊 Dépenses par groupe de charges")
 
-    df_grp = (
+    grp = (
         df_f
         .groupby("groupe_charges", as_index=False)
         .agg(
             total=("montant_ttc", "sum"),
-            nb_lignes=("depense_id", "count")
+            lignes=("depense_id", "count")
         )
         .sort_values("total", ascending=False)
     )
 
-    df_grp["Total"] = df_grp["total"].apply(euro)
+    grp["Total"] = grp["total"].apply(euro)
 
     st.dataframe(
-        df_grp[["groupe_charges", "Total", "nb_lignes"]],
+        grp[["groupe_charges", "Total", "lignes"]],
         use_container_width=True
     )
