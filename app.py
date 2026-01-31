@@ -1,57 +1,64 @@
 import streamlit as st
-from supabase import create_client
 
-# =========================
-# CONFIG STREAMLIT
-# =========================
+from supabase_client import get_supabase_client
+
+from depenses_ui import depenses_ui
+from depenses_detail_ui import depenses_detail_ui
+
+
+# ======================================================
+# Configuration Streamlit
+# ======================================================
 st.set_page_config(
-    page_title="Pilotage des charges - Dépenses",
-    layout="wide"
+    page_title="Pilotage des charges",
+    layout="wide",
 )
 
-# =========================
-# SUPABASE (ANON KEY)
-# =========================
-@st.cache_resource
-def get_supabase():
-    """
-    Connexion Supabase avec SUPABASE_URL et SUPABASE_ANON_KEY
-    définis dans .streamlit/secrets.toml
-    """
-    try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_ANON_KEY"]
-    except KeyError:
-        st.error(
-            "❌ Supabase mal configuré.\n\n"
-            "Vérifie `.streamlit/secrets.toml` avec les clés :\n"
-            "  - SUPABASE_URL\n"
-            "  - SUPABASE_ANON_KEY"
-        )
-        st.stop()
 
-    return create_client(url, key)
+# ======================================================
+# Sidebar – Filtres globaux
+# ======================================================
+st.sidebar.title("🔎 Filtres globaux")
+
+annee = st.sidebar.selectbox(
+    "Année",
+    [2023, 2024, 2025],
+    index=2
+)
 
 
+# ======================================================
+# Supabase
+# ======================================================
+supabase = get_supabase_client()
+
+
+# ======================================================
+# App principale
+# ======================================================
 def main():
-    supabase = get_supabase()
-
-    # =========================
-    # FILTRE GLOBAL ANNÉE
-    # =========================
-    st.sidebar.title("🔎 Filtres globaux")
-    annee = st.sidebar.selectbox(
-        "Année",
-        options=[2023, 2024, 2025, 2026],
-        index=2  # 2025 par défaut
-    )
-
     st.title("📊 Pilotage des charges – Dépenses")
 
-    # Import et appel du module Dépenses
-    from depenses_ui import depenses_ui
-    depenses_ui(supabase, annee)
+    tabs = st.tabs([
+        "📊 Dépenses par groupe de charges",
+        "📄 Détail des dépenses",
+    ])
+
+    # ----------------------------
+    # Onglet 1 – Synthèse
+    # ----------------------------
+    with tabs[0]:
+        depenses_ui(supabase, annee)
+
+    # ----------------------------
+    # Onglet 2 – Détail
+    # ----------------------------
+    with tabs[1]:
+        depenses_detail_ui(supabase, annee)
 
 
+# ======================================================
+# Entrée
+# ======================================================
 if __name__ == "__main__":
     main()
