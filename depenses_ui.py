@@ -3,14 +3,17 @@ import pandas as pd
 
 
 def euro(x):
-    return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
+    try:
+        return f"{float(x):,.2f} €".replace(",", " ").replace(".", ",")
+    except Exception:
+        return "0,00 €"
 
 
 def depenses_ui(supabase, annee):
     st.header(f"📄 Dépenses – {annee}")
 
     # ======================================================
-    # CHARGEMENT DES DONNÉES
+    # CHARGEMENT DES DÉPENSES
     # ======================================================
     dep_resp = (
         supabase
@@ -28,6 +31,9 @@ def depenses_ui(supabase, annee):
 
     df_dep = pd.DataFrame(dep_resp.data)
 
+    # ======================================================
+    # CHARGEMENT PLAN COMPTABLE (GROUPES DE CHARGES)
+    # ======================================================
     plan_resp = (
         supabase
         .table("plan_comptable")
@@ -38,7 +44,7 @@ def depenses_ui(supabase, annee):
     df_plan = pd.DataFrame(plan_resp.data)
 
     # ======================================================
-    # JOINTURE PLAN COMPTABLE → GROUPE DE CHARGES
+    # JOINTURE
     # ======================================================
     df = df_dep.merge(
         df_plan,
@@ -47,10 +53,14 @@ def depenses_ui(supabase, annee):
         right_on="compte_8"
     )
 
+    # ======================================================
+    # NORMALISATION GROUPE_CHARGES (POINT CRITIQUE)
+    # ======================================================
     df["groupe_charges"] = (
         df["groupe_charges"]
-        .fillna("Non affecté")
-        .astype(str)
+        .fillna(0)              # NULL → 0
+        .astype(int)            # sécurité
+        .astype(str)            # TRI SAFE
     )
 
     # ======================================================
@@ -66,13 +76,13 @@ def depenses_ui(supabase, annee):
 
     with col2:
         fournisseurs = ["Tous"] + sorted(
-            df["fournisseur"].dropna().unique().tolist()
+            df["fournisseur"].dropna().astype(str).unique().tolist()
         )
         fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
 
     with col3:
         postes = ["Tous"] + sorted(
-            df["poste"].dropna().unique().tolist()
+            df["poste"].dropna().astype(str).unique().tolist()
         )
         poste_sel = st.selectbox("Poste", postes)
 
