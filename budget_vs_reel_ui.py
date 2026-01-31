@@ -6,7 +6,7 @@ def budget_vs_reel_ui(supabase, annee):
     st.header(f"📊 Budget vs Réel – {annee}")
 
     # =========================
-    # CHARGEMENT BUDGETS
+    # BUDGETS
     # =========================
     r_budget = (
         supabase
@@ -16,30 +16,25 @@ def budget_vs_reel_ui(supabase, annee):
         .execute()
     )
 
-    if not r_budget.data:
-        st.warning("Aucun budget trouvé pour cette année.")
+    if r_budget.data is None or len(r_budget.data) == 0:
+        st.warning("Aucun budget pour cette année.")
         return
 
     df_budget = pd.DataFrame(r_budget.data)
 
     # =========================
-    # CHARGEMENT DÉPENSES (VUE ENRICHIE)
+    # DÉPENSES (VUE ENRICHIE)
     # =========================
     r_dep = (
         supabase
         .table("v_depenses_enrichies")
-        .select("""
-            annee,
-            groupe_compte,
-            groupe_charges,
-            montant_ttc
-        """)
+        .select("*")
         .eq("annee", annee)
         .execute()
     )
 
-    if not r_dep.data:
-        st.warning("Aucune dépense trouvée pour cette année.")
+    if r_dep.data is None or len(r_dep.data) == 0:
+        st.warning("Aucune dépense pour cette année.")
         return
 
     df_dep = pd.DataFrame(r_dep.data)
@@ -47,36 +42,42 @@ def budget_vs_reel_ui(supabase, annee):
     # =========================
     # FILTRE GROUPE DE CHARGES
     # =========================
-    groupes_charges = ["Tous"] + sorted(
+    groupes = ["Tous"] + sorted(
         df_dep["groupe_charges"].dropna().unique().tolist()
     )
 
     groupe_sel = st.selectbox(
         "Groupe de charges",
-        groupes_charges,
-        key="bvr_groupe_charges"
+        groupes,
+        key="bvr_filtre_groupe_charges"
     )
 
     if groupe_sel != "Tous":
         df_dep = df_dep[df_dep["groupe_charges"] == groupe_sel]
 
     # =========================
-    # AGRÉGATION
+    # AGRÉGATION RÉEL
     # =========================
-    dep_group = (
+    df_reel = (
         df_dep
         .groupby(["groupe_charges", "groupe_compte"], as_index=False)
         .agg(reel=("montant_ttc", "sum"))
     )
 
-    bud_group = (
+    # =========================
+    # AGRÉGATION BUDGET
+    # =========================
+    df_bud = (
         df_budget
         .groupby("groupe_compte", as_index=False)
         .agg(budget=("budget", "sum"))
     )
 
-    df = dep_group.merge(
-        bud_group,
+    # =========================
+    # MERGE
+    # =========================
+    df = df_reel.merge(
+        df_bud,
         on="groupe_compte",
         how="left"
     )
@@ -87,7 +88,7 @@ def budget_vs_reel_ui(supabase, annee):
     # =========================
     # SOUS-TOTAUX PAR GROUPE DE CHARGES
     # =========================
-    total_groupes = (
+    totals = (
         df
         .groupby("groupe_charges", as_index=False)
         .agg(
@@ -97,12 +98,9 @@ def budget_vs_reel_ui(supabase, annee):
         )
     )
 
-    total_groupes["groupe_compte"] = "TOTAL"
+    totals["groupe_compte"] = "TOTAL"
 
-    df_final = pd.concat(
-        [df, total_groupes],
-        ignore_index=True
-    )
+    df_final = pd.concat([df, totals], ignore_index=True)
 
     # =========================
     # AFFICHAGE
@@ -115,7 +113,7 @@ def budget_vs_reel_ui(supabase, annee):
     )
 
     # =========================
-    # KPI GLOBAUX
+    # KPI
     # =========================
     total_budget = df["budget"].sum()
     total_reel = df["reel"].sum()
