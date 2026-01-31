@@ -39,53 +39,49 @@ def depenses_ui(supabase, annee):
     df = pd.DataFrame(resp.data)
 
     # ======================================================
-    # SÉCURISATION ABSOLUE DES COLONNES
+    # SÉCURISATION DES COLONNES
     # ======================================================
-    colonnes = [
+    for col in [
         "depense_id",
-        "annee",
         "compte",
         "poste",
         "fournisseur",
         "date",
         "montant_ttc",
-        "lot_id",
-    ]
-
-    for col in colonnes:
+        "lot_id"
+    ]:
         if col not in df.columns:
             df[col] = ""
 
-    df["fournisseur"] = df["fournisseur"].fillna("")
-    df["poste"] = df["poste"].fillna("")
-    df["compte"] = df["compte"].fillna("")
+    df = df.fillna("")
 
     # ======================================================
-    # PLAN COMPTABLE → GROUPE DE CHARGES
+    # CHARGEMENT PLAN COMPTABLE (GROUPE DE CHARGES)
     # ======================================================
-    plan = (
+    plan_resp = (
         supabase
         .table("plan_comptable")
         .select("compte_8, groupe_charges")
         .execute()
     )
 
-    if plan.data:
-        df_plan = pd.DataFrame(plan.data)
+    df["groupe_charges"] = "Non affecté"
 
-        df = df.merge(
-            df_plan,
-            left_on="compte",
-            right_on="compte_8",
-            how="left"
-        )
-    else:
-        df["groupe_charges"] = "Non affecté"
+    if plan_resp.data:
+        df_plan = pd.DataFrame(plan_resp.data)
 
-    if "groupe_charges" not in df.columns:
-        df["groupe_charges"] = "Non affecté"
+        if "compte_8" in df_plan.columns:
+            df = df.merge(
+                df_plan,
+                left_on="compte",
+                right_on="compte_8",
+                how="left"
+            )
 
-    df["groupe_charges"] = df["groupe_charges"].fillna("Non affecté")
+            df["groupe_charges"] = (
+                df["groupe_charges"]
+                .fillna("Non affecté")
+            )
 
     # ======================================================
     # FILTRES
@@ -95,38 +91,17 @@ def depenses_ui(supabase, annee):
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        fournisseurs = ["Tous"] + sorted(
-            df["fournisseur"].astype(str).unique().tolist()
-        )
-        fournisseur_sel = st.selectbox(
-            "Fournisseur",
-            fournisseurs,
-            key="filtre_fournisseur"
-        )
+        fournisseurs = ["Tous"] + sorted(df["fournisseur"].unique())
+        fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
 
     with col2:
-        groupes = ["Tous"] + sorted(
-            df["groupe_charges"].astype(str).unique().tolist()
-        )
-        groupe_sel = st.selectbox(
-            "Groupe de charges",
-            groupes,
-            key="filtre_groupe"
-        )
+        groupes = ["Tous"] + sorted(df["groupe_charges"].unique())
+        groupe_sel = st.selectbox("Groupe de charges", groupes)
 
     with col3:
-        comptes = ["Tous"] + sorted(
-            df["compte"].astype(str).unique().tolist()
-        )
-        compte_sel = st.selectbox(
-            "Compte",
-            comptes,
-            key="filtre_compte"
-        )
+        comptes = ["Tous"] + sorted(df["compte"].unique())
+        compte_sel = st.selectbox("Compte", comptes)
 
-    # ======================================================
-    # APPLICATION DES FILTRES
-    # ======================================================
     df_f = df.copy()
 
     if fournisseur_sel != "Tous":
@@ -141,7 +116,7 @@ def depenses_ui(supabase, annee):
     # ======================================================
     # KPI
     # ======================================================
-    total = df_f["montant_ttc"].sum()
+    total = df_f["montant_ttc"].astype(float).sum()
     nb = len(df_f)
     moy = total / nb if nb else 0
 
