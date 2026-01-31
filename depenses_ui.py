@@ -3,39 +3,40 @@ import pandas as pd
 
 
 def depenses_ui(supabase):
-    st.header("💸 Dépenses")
+    st.title("💸 Dépenses")
 
     # -------------------------
-    # Sélection de l’année
+    # Sélection année
     # -------------------------
     annee = st.selectbox(
         "Année",
         [2023, 2024, 2025, 2026],
-        index=1
+        index=0
     )
 
     # -------------------------
     # Chargement des dépenses
     # -------------------------
-    resp = (
-        supabase
-        .table("depenses")
-        .select("""
-            depense_id,
-            annee,
-            compte,
-            poste,
-            fournisseur,
-            montant_ttc,
-            date_depense
-        """)
-        .eq("annee", annee)
-        .order("date_depense", desc=False)
-        .execute()
-    )
+    try:
+        query = (
+            supabase
+            .table("depenses")
+            .select(
+                "depense_id, annee, date, compte, poste, fournisseur, "
+                "montant_ttc, type, commentaire, lot_id"
+            )
+            .eq("annee", annee)
+        )
+
+        resp = query.execute()
+
+    except Exception as e:
+        st.error("❌ Erreur lors du chargement des dépenses")
+        st.exception(e)
+        return
 
     if not resp.data:
-        st.info("Aucune dépense pour cette année.")
+        st.warning("Aucune dépense pour cette année.")
         return
 
     df = pd.DataFrame(resp.data)
@@ -43,34 +44,31 @@ def depenses_ui(supabase):
     # -------------------------
     # Mise en forme
     # -------------------------
-    df["date_depense"] = pd.to_datetime(df["date_depense"])
-    df["montant_ttc"] = df["montant_ttc"].astype(float)
-
-    df_view = df.rename(columns={
+    df = df.rename(columns={
         "depense_id": "ID",
-        "date_depense": "Date",
+        "date": "Date",
         "compte": "Compte",
         "poste": "Poste",
         "fournisseur": "Fournisseur",
         "montant_ttc": "Montant TTC (€)",
+        "type": "Type",
+        "commentaire": "Commentaire",
+        "lot_id": "Lot"
     })
+
+    df["Montant TTC (€)"] = df["Montant TTC (€)"].astype(float)
 
     # -------------------------
     # KPI
     # -------------------------
-    total = df["montant_ttc"].sum()
+    total = df["Montant TTC (€)"].sum()
+
     st.metric("Total des dépenses (€)", f"{total:,.2f}")
 
     # -------------------------
     # Tableau
     # -------------------------
     st.dataframe(
-        df_view[[
-            "Date",
-            "Compte",
-            "Poste",
-            "Fournisseur",
-            "Montant TTC (€)"
-        ]],
+        df.sort_values("Date", ascending=False),
         use_container_width=True
     )
