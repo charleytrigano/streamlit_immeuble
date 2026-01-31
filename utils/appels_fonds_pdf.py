@@ -9,7 +9,7 @@ from reportlab.lib.units import cm
 from io import BytesIO
 from datetime import date
 
-from repartition_lots_ui import repartition_lots_ui
+
 
 
 def euro(x):
