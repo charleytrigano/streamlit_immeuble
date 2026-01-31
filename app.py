@@ -1,40 +1,46 @@
-import sys
 import os
-import streamlit as st
+import sys
 
 # =====================================================
-# 🔧 FIX PYTHONPATH (OBLIGATOIRE pour Streamlit Cloud)
+# 🔧 PYTHONPATH FIX (OBLIGATOIRE STREAMLIT CLOUD)
 # =====================================================
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+UTILS_DIR = os.path.join(ROOT_DIR, "utils")
+
 if ROOT_DIR not in sys.path:
-    sys.path.append(ROOT_DIR)
+    sys.path.insert(0, ROOT_DIR)
+
+if UTILS_DIR not in sys.path:
+    sys.path.insert(0, UTILS_DIR)
 
 # =====================================================
 # IMPORTS
 # =====================================================
-from utils.supabase_client import get_supabase_client
+import streamlit as st
 
-from utils.budget_ui import budget_ui
-from utils.depenses_ui import depenses_ui
-from utils.plan_comptable_ui import plan_comptable_ui
-from utils.lots_ui import lots_ui
-from utils.repartition_lots_ui import repartition_lots_ui
-from utils.charges_par_lot_ui import charges_par_lot_ui
-from utils.controle_repartition_ui import controle_repartition_ui
-from utils.appels_fonds_trimestre_ui import appels_fonds_trimestre_ui
-from utils.statistiques_ui import statistiques_ui
+from supabase_client import get_supabase_client
+
+from budget_ui import budget_ui
+from depenses_ui import depenses_ui
+from plan_comptable_ui import plan_comptable_ui
+from lots_ui import lots_ui
+from repartition_lots_ui import repartition_lots_ui
+from charges_par_lot_ui import charges_par_lot_ui
+from controle_repartition_ui import controle_repartition_ui
+from appels_fonds_trimestre_ui import appels_fonds_trimestre_ui
+from statistiques_ui import statistiques_ui
 
 # =====================================================
-# CONFIG STREAMLIT
+# STREAMLIT CONFIG
 # =====================================================
 st.set_page_config(
-    page_title="Pilotage Immeuble",
+    page_title="🏢 Pilotage Immeuble",
     page_icon="🏢",
     layout="wide"
 )
 
 # =====================================================
-# SUPABASE CLIENT
+# SUPABASE
 # =====================================================
 @st.cache_resource
 def init_supabase():
@@ -48,16 +54,8 @@ def main():
 
     supabase = init_supabase()
 
-    # -------------------------------
-    # SIDEBAR
-    # -------------------------------
     st.sidebar.header("Paramètres")
-
-    annee = st.sidebar.selectbox(
-        "📅 Année",
-        options=[2024, 2025, 2026],
-        index=1
-    )
+    annee = st.sidebar.selectbox("Année", [2024, 2025, 2026], index=1)
 
     menu = st.sidebar.radio(
         "Navigation",
@@ -70,13 +68,10 @@ def main():
             "Charges par lot",
             "Contrôle répartition",
             "Appels de fonds trimestriels",
-            "Statistiques"
+            "Statistiques",
         ]
     )
 
-    # -------------------------------
-    # ROUTING
-    # -------------------------------
     if menu == "Budgets":
         budget_ui(supabase, annee)
 
