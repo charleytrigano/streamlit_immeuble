@@ -94,13 +94,13 @@ def depenses_ui(supabase, annee):
     resp_edit = (
         supabase
         .table("depenses")
-        .select("id, date, compte, poste, montant_ttc, annee")
+        .select("depense_id, date, compte, poste, montant_ttc, annee")
         .eq("annee", annee)
         .execute()
     )
 
     df_edit = pd.DataFrame(resp_edit.data) if resp_edit.data else pd.DataFrame(
-        columns=["id", "date", "compte", "poste", "montant_ttc", "annee"]
+        columns=["depense_id", "date", "compte", "poste", "montant_ttc", "annee"]
     )
 
     edited_df = st.data_editor(
@@ -112,7 +112,8 @@ def depenses_ui(supabase, annee):
 
     if st.button("💾 Enregistrer"):
         for _, row in edited_df.iterrows():
-            if pd.isna(row["id"]):
+            if pd.isna(row["depense_id"]):
+                # INSERT
                 supabase.table("depenses").insert({
                     "annee": annee,
                     "date": row["date"],
@@ -121,12 +122,13 @@ def depenses_ui(supabase, annee):
                     "montant_ttc": row["montant_ttc"]
                 }).execute()
             else:
+                # UPDATE
                 supabase.table("depenses").update({
                     "date": row["date"],
                     "compte": row["compte"],
                     "poste": row["poste"],
                     "montant_ttc": row["montant_ttc"]
-                }).eq("id", row["id"]).execute()
+                }).eq("depense_id", row["depense_id"]).execute()
 
         st.success("✅ Dépenses enregistrées")
         st.rerun()
