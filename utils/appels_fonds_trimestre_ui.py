@@ -1,137 +1,124 @@
 import streamlit as st
 import pandas as pd
 
-BASE_TANTIEMES = 10_000
-TAUX_LOI_ALUR = 0.05
-
+GROUPES_CHARGES = {
+    1: "Charges communes générales",
+    2: "Charges spéciales RDC / sous-sol",
+    3: "Charges spéciales sous-sol",
+    4: "Charges garages / parkings",
+    5: "Ascenseurs",
+    6: "Monte-voitures",
+}
 
 def euro(x):
     return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
-
 def appels_fonds_trimestre_ui(supabase, annee):
     st.subheader(f"📢 Appels de fonds trimestriels – {annee}")
 
-    # ==================================================
-    # 1. BUDGET ANNUEL
-    # ==================================================
-    bud = (
-        supabase
-        .table("budgets")
-        .select("budget")
+    # =========================
+    # CHARGEMENT DES DONNÉES
+    # =========================
+    df_budget = pd.DataFrame(
+        supabase.table("budgets")
+        .select("groupe_compte, budget")
         .eq("annee", annee)
         .execute()
+        .data
     )
 
-    if not bud.data:
-        st.warning("Aucun budget enregistré pour cette année")
-        return
-
-    budget_annuel = sum(b["budget"] for b in bud.data)
-    budget_trimestriel = budget_annuel / 4
-
-    # ==================================================
-    # 2. LOTS
-    # ==================================================
-    lots = (
-        supabase
-        .table("lots")
-        .select("""
-            lot_id,
-            lot,
-            proprietaire,
-            tantiemes
-        """)
+    df_plan = pd.DataFrame(
+        supabase.table("plan_comptable")
+        .select("groupe_compte, groupe_charges")
         .execute()
+        .data
     )
 
-    if not lots.data:
-        st.warning("Aucun lot trouvé")
+    df_lots = pd.DataFrame(
+        supabase.table("lots")
+        .select("lot_id, proprietaire, tantiemes")
+        .execute()
+        .data
+    )
+
+    if df_budget.empty or df_plan.empty or df_lots.empty:
+        st.warning("Données insuffisantes pour calculer les appels de fonds")
         return
 
-    df_lots = pd.DataFrame(lots.data)
-    df_lots["tantiemes"] = df_lots["tantiemes"].fillna(0)
-
-    # ==================================================
-    # 3. CALCUL DES APPELS
-    # ==================================================
-    df_lots["appel_trimestriel"] = (
-        budget_trimestriel * df_lots["tantiemes"] / BASE_TANTIEMES
+    # =========================
+    # BUDGET PAR GROUPE DE CHARGES
+    # =========================
+    df_budget = df_budget.merge(
+        df_plan, on="groupe_compte", how="left"
     )
 
-    df_lots["loi_alur"] = df_lots["appel_trimestriel"] * TAUX_LOI_ALUR
-    df_lots["total_appel"] = (
-        df_lots["appel_trimestriel"] + df_lots["loi_alur"]
+    df_budget_grp = (
+        df_budget
+        .groupby("groupe_charges", as_index=False)["budget"]
+        .sum()
     )
 
-    # ==================================================
-    # 4. KPI
-    # ==================================================
-    col1, col2, col3 = st.columns(3)
+    # =========================
+    # RÉPARTITION PAR LOT
+    # =========================
+    total_tantiemes = df_lots["tantiemes"].sum()
 
-    col1.metric(
-        "Budget annuel",
-        euro(budget_annuel)
-    )
+    repartitions = []
 
-    col2.metric(
-        "Appel trimestriel total",
-        euro(df_lots["appel_trimestriel"].sum())
-    )
+    for _, lot in df_lots.iterrows():
+        for _, row in df_budget_grp.iterrows():
+            part = (
+                row["budget"]
+                * lot["tantiemes"]
+                / total_tantiemes
+            )
 
-    col3.metric(
-        "Total Loi ALUR (5 %)",
-        euro(df_lots["loi_alur"].sum())
-    )
+            repartitions.append({
+                "proprietaire": lot["proprietaire"],
+                "groupe_charges": row["groupe_charges"],
+                "montant": part
+            })
 
-    # ==================================================
-    # 5. TABLEAU PAR LOT
-    # ==================================================
-    st.markdown("### 📋 Appels par lot")
+    df_rep = pd.DataFrame(repartitions)
 
-    st.dataframe(
-        df_lots[[
-            "lot",
-            "proprietaire",
-            "tantiemes",
-            "appel_trimestriel",
-            "loi_alur",
-            "total_appel"
-        ]]
-        .rename(columns={
-            "lot": "Lot",
-            "proprietaire": "Propriétaire",
-            "tantiemes": "Tantièmes",
-            "appel_trimestriel": "Appel trimestriel (€)",
-            "loi_alur": "Loi ALUR 5 % (€)",
-            "total_appel": "Total à appeler (€)"
-        })
-        .sort_values("Lot"),
-        use_container_width=True
-    )
-
-    # ==================================================
-    # 6. SYNTHÈSE PAR PROPRIÉTAIRE
-    # ==================================================
-    st.markdown("### 👤 Synthèse par propriétaire")
-
-    synthese = (
-        df_lots
-        .groupby("proprietaire", as_index=False)
-        .agg(
-            appel=("appel_trimestriel", "sum"),
-            loi_alur=("loi_alur", "sum"),
-            total=("total_appel", "sum")
+    # =========================
+    # AGRÉGATION PAR PROPRIÉTAIRE
+    # =========================
+    df_pivot = (
+        df_rep
+        .pivot_table(
+            index="proprietaire",
+            columns="groupe_charges",
+            values="montant",
+            aggfunc="sum",
+            fill_value=0
         )
-        .fillna("—")
+        .reset_index()
     )
 
+    # Renommage des colonnes
+    df_pivot.rename(columns=GROUPES_CHARGES, inplace=True)
+
+    # =========================
+    # LOI ALUR + TOTAUX
+    # =========================
+    charges_cols = list(GROUPES_CHARGES.values())
+
+    df_pivot["Total charges"] = df_pivot[charges_cols].sum(axis=1)
+    df_pivot["Loi ALUR (5%)"] = df_pivot["Total charges"] * 0.05
+    df_pivot["Total à appeler"] = (
+        df_pivot["Total charges"] + df_pivot["Loi ALUR (5%)"]
+    )
+    df_pivot["Appel trimestriel"] = df_pivot["Total à appeler"] / 4
+
+    # =========================
+    # AFFICHAGE
+    # =========================
+    st.markdown("### 📋 Détail par propriétaire")
+
     st.dataframe(
-        synthese.rename(columns={
-            "proprietaire": "Propriétaire",
-            "appel": "Appel trimestriel (€)",
-            "loi_alur": "Loi ALUR (€)",
-            "total": "Total (€)"
-        }),
+        df_pivot.style.format(
+            {col: euro for col in df_pivot.columns if col != "proprietaire"}
+        ),
         use_container_width=True
     )
