@@ -1,84 +1,100 @@
 import streamlit as st
-from supabase import create_client
 
-from utils.depenses_ui import depenses_ui
+from utils.supabase_client import get_supabase_client
+
+# UI modules
 from utils.budget_ui import budget_ui
-from utils.montant_vs_reel_ui import montant_vs_reel_ui
-from utils.appels_fonds_trimestre_ui import appels_fonds_trimestre_ui
-from utils.repartition_lots_ui import repartition_lots_ui
+from utils.depenses_ui import depenses_ui
 from utils.plan_comptable_ui import plan_comptable_ui
 from utils.lots_ui import lots_ui
+from utils.repartition_lots_ui import repartition_lots_ui
+from utils.charges_par_lot_ui import charges_par_lot_ui
+from utils.controle_repartition_ui import controle_repartition_ui
+from utils.appels_fonds_trimestre_ui import appels_fonds_trimestre_ui
+from utils.statistiques_ui import statistiques_ui
 
 
-
-# =========================
+# =============================
 # CONFIG STREAMLIT
-# =========================
+# =============================
 st.set_page_config(
-    page_title="Immeuble – Pilotage",
+    page_title="Pilotage Immeuble",
     layout="wide"
 )
 
-st.title("🏢 Pilotage des charges de l’immeuble")
+
+# =============================
+# SUPABASE CLIENT
+# =============================
+@st.cache_resource
+def init_supabase():
+    return get_supabase_client()
 
 
-# =========================
-# CONNEXION SUPABASE (ANON)
-# =========================
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_ANON_KEY"]   # 👈 plus de service role ici
+# =============================
+# MAIN APP
+# =============================
+def main():
+    st.title("🏢 Pilotage de l’immeuble")
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    supabase = init_supabase()
+
+    # Sélecteur d'année global
+    annee = st.sidebar.selectbox(
+        "📅 Année",
+        options=[2024, 2025, 2026],
+        index=1
+    )
+
+    # Menu principal
+    menu = st.sidebar.radio(
+        "Navigation",
+        [
+            "Budgets",
+            "Dépenses",
+            "Plan comptable",
+            "Lots",
+            "Répartition par lot",
+            "Charges par lot",
+            "Contrôle répartition",
+            "Appels de fonds trimestriels",
+            "Statistiques"
+        ]
+    )
+
+    # =============================
+    # ROUTING UI
+    # =============================
+    if menu == "Budgets":
+        budget_ui(supabase, annee)
+
+    elif menu == "Dépenses":
+        depenses_ui(supabase, annee)
+
+    elif menu == "Plan comptable":
+        plan_comptable_ui(supabase)
+
+    elif menu == "Lots":
+        lots_ui(supabase)
+
+    elif menu == "Répartition par lot":
+        repartition_lots_ui(supabase, annee)
+
+    elif menu == "Charges par lot":
+        charges_par_lot_ui(supabase, annee)
+
+    elif menu == "Contrôle répartition":
+        controle_repartition_ui(supabase, annee)
+
+    elif menu == "Appels de fonds trimestriels":
+        appels_fonds_trimestre_ui(supabase, annee)
+
+    elif menu == "Statistiques":
+        statistiques_ui(supabase, annee)
 
 
-# =========================
-# SIDEBAR
-# =========================
-st.sidebar.header("⚙️ Paramètres")
-
-annee = st.sidebar.selectbox(
-    "Année",
-    options=[2024, 2025, 2026],
-    index=1,
-)
-
-onglet = st.sidebar.radio(
-    "Navigation",
-    [
-        "Dépenses",
-        "Budget",
-        "Appels de fonds trimestriels",
-        "Répartition par lot",
-        "Plan comptable",
-        "Lots",
-    ]
-)
-
-
-# =========================
-# ROUTAGE
-# =========================
-if onglet == "Dépenses":
-    depenses_ui(supabase, annee)
-
-elif onglet == "Budget":
-    budgets_ui(supabase, annee)
-
-elif onglet == "Appels de fonds trimestriels":
-    appels_fonds_trimestre_ui(supabase, annee)
-
-elif onglet == "Répartition par lot":
-    repartition_lots_ui(supabase, annee)
-
-elif onglet == "Plan comptable":
-    plan_comptable_ui(supabase)
-
-elif onglet == "Lots":
-    lots_ui(supabase)
-
-
-# =========================
-# FOOTER
-# =========================
-st.markdown("---")
-st.caption("Immeuble – Pilotage | Budgets, charges & appels de fonds")
+# =============================
+# ENTRY POINT
+# =============================
+if __name__ == "__main__":
+    main()
