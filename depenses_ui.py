@@ -6,12 +6,12 @@ def depenses_ui(supabase):
     st.header("💸 Dépenses")
 
     # -------------------------
-    # Sélection année
+    # Sélection de l’année
     # -------------------------
     annee = st.selectbox(
         "Année",
         [2023, 2024, 2025, 2026],
-        index=0
+        index=1
     )
 
     # -------------------------
@@ -21,18 +21,16 @@ def depenses_ui(supabase):
         supabase
         .table("depenses")
         .select("""
-            id,
-            date_depense,
-            libelle,
-            montant_ttc,
+            depense_id,
+            annee,
             compte,
-            plan_comptable:compte (
-                groupe_compte,
-                libelle_groupe
-            )
+            poste,
+            fournisseur,
+            montant_ttc,
+            date_depense
         """)
         .eq("annee", annee)
-        .order("date_depense")
+        .order("date_depense", desc=False)
         .execute()
     )
 
@@ -43,64 +41,36 @@ def depenses_ui(supabase):
     df = pd.DataFrame(resp.data)
 
     # -------------------------
-    # Normalisation colonnes jointes
+    # Mise en forme
     # -------------------------
-    df["groupe_compte"] = df["plan_comptable"].apply(
-        lambda x: x["groupe_compte"] if x else None
-    )
-    df["libelle_groupe"] = df["plan_comptable"].apply(
-        lambda x: x["libelle_groupe"] if x else None
-    )
+    df["date_depense"] = pd.to_datetime(df["date_depense"])
+    df["montant_ttc"] = df["montant_ttc"].astype(float)
 
-    df = df.drop(columns=["plan_comptable"])
+    df_view = df.rename(columns={
+        "depense_id": "ID",
+        "date_depense": "Date",
+        "compte": "Compte",
+        "poste": "Poste",
+        "fournisseur": "Fournisseur",
+        "montant_ttc": "Montant TTC (€)",
+    })
 
     # -------------------------
-    # Affichage tableau principal
+    # KPI
     # -------------------------
-    st.subheader("📋 Liste des dépenses")
+    total = df["montant_ttc"].sum()
+    st.metric("Total des dépenses (€)", f"{total:,.2f}")
 
+    # -------------------------
+    # Tableau
+    # -------------------------
     st.dataframe(
-        df[[
-            "date_depense",
-            "libelle",
-            "montant_ttc",
-            "compte",
-            "groupe_compte",
-            "libelle_groupe",
-        ]].rename(columns={
-            "date_depense": "Date",
-            "libelle": "Libellé",
-            "montant_ttc": "Montant TTC (€)",
-            "compte": "Compte",
-            "groupe_compte": "Groupe",
-            "libelle_groupe": "Libellé groupe",
-        }),
+        df_view[[
+            "Date",
+            "Compte",
+            "Poste",
+            "Fournisseur",
+            "Montant TTC (€)"
+        ]],
         use_container_width=True
     )
-
-    # -------------------------
-    # Totaux par groupe
-    # -------------------------
-    st.subheader("📊 Totaux par groupe de charges")
-
-    df_totaux = (
-        df
-        .groupby(["groupe_compte", "libelle_groupe"], as_index=False)
-        .agg(total=("montant_ttc", "sum"))
-        .sort_values("groupe_compte")
-    )
-
-    st.dataframe(
-        df_totaux.rename(columns={
-            "groupe_compte": "Groupe",
-            "libelle_groupe": "Libellé groupe",
-            "total": "Total (€)",
-        }),
-        use_container_width=True
-    )
-
-    # -------------------------
-    # KPI global
-    # -------------------------
-    total_general = df["montant_ttc"].sum()
-    st.metric("💰 Total dépenses", f"{total_general:,.2f} €")
