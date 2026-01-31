@@ -2,7 +2,7 @@ import streamlit as st
 from supabase import create_client
 
 # =========================
-# CONFIG STREAMLIT
+# CONFIG
 # =========================
 st.set_page_config(
     page_title="Pilotage des charges",
@@ -14,20 +14,9 @@ st.set_page_config(
 # =========================
 @st.cache_resource
 def get_supabase():
-    try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_ANON_KEY"]
-    except KeyError:
-        st.error(
-            "❌ Clés Supabase manquantes.\n\n"
-            "Vérifie `.streamlit/secrets.toml` :\n"
-            "SUPABASE_URL\n"
-            "SUPABASE_ANON_KEY"
-        )
-        st.stop()
-
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_ANON_KEY"]
     return create_client(url, key)
-
 
 # =========================
 # MAIN
@@ -35,76 +24,34 @@ def get_supabase():
 def main():
     supabase = get_supabase()
 
-    # =========================
-    # SIDEBAR – FILTRES GLOBAUX
-    # =========================
-    st.sidebar.title("🔎 Filtres globaux")
+    # ---- Filtres globaux
+    st.sidebar.title("🔎 Filtres")
+    annee = st.sidebar.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
 
-    annee = st.sidebar.selectbox(
-        "Année",
-        options=[2023, 2024, 2025, 2026],
-        index=2
-    )
+    st.title("📊 Pilotage des charges")
 
-    # =========================
-    # TITRE
-    # =========================
-    st.title("📊 Pilotage des charges de l’immeuble")
-
-    # =========================
-    # ONGLET PRINCIPAL
-    # =========================
     tab_dep, tab_bud, tab_bvr, tab_plan = st.tabs([
         "📄 Dépenses",
         "💰 Budget",
         "📊 Budget vs Réel",
-        "📘 Plan comptable"
+        "📘 Plan comptable",
     ])
 
-    # =========================
-    # DÉPENSES
-    # =========================
     with tab_dep:
-        try:
-            from depenses_ui import depenses_ui
-            depenses_ui(supabase, annee)
-        except Exception as e:
-            st.error("❌ Erreur dans Dépenses")
-            st.exception(e)
+        from depenses_ui import depenses_ui
+        depenses_ui(supabase, annee)
 
-    # =========================
-    # BUDGET
-    # =========================
     with tab_bud:
-        try:
-            from budget_ui import budget_ui
-            budget_ui(supabase, annee)
-        except Exception as e:
-            st.error("❌ Erreur dans Budget")
-            st.exception(e)
+        from budget_ui import budget_ui
+        budget_ui(supabase, annee)
 
-    # =========================
-    # BUDGET VS RÉEL
-    # =========================
     with tab_bvr:
-        try:
-            from budget_vs_reel_ui import budget_vs_reel_ui
-            budget_vs_reel_ui(supabase, annee)
-        except Exception as e:
-            st.error("❌ Erreur dans Budget vs Réel")
-            st.exception(e)
+        from budget_vs_reel_ui import budget_vs_reel_ui
+        budget_vs_reel_ui(supabase, annee)
 
-    # =========================
-    # PLAN COMPTABLE
-    # =========================
     with tab_plan:
-        try:
-            from plan_comptable_ui import plan_comptable_ui
-            plan_comptable_ui(supabase)
-        except Exception as e:
-            st.error("❌ Erreur dans Plan comptable")
-            st.exception(e)
-
+        from plan_comptable_ui import plan_comptable_ui
+        plan_comptable_ui(supabase)
 
 # =========================
 # RUN
