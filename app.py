@@ -1,72 +1,151 @@
-import streamlit as st
-
-import sys
 import os
-
-sys.path.append(os.path.dirname(__file__))
-
+import sys
+import streamlit as st
 from supabase import create_client
-from utils.depenses_ui import depenses_ui
-from utils.budgets_ui import budgets_ui
-from utils.plan_comptable_ui import plan_comptable_ui
-from utils.repartition_ui import repartition_par_lot_ui, controle_repartition_ui
 
-
-
-
-
-# --------------------------------------------------
-# CONFIG
-# --------------------------------------------------
+# ======================================================
+# CONFIG STREAMLIT
+# ======================================================
 st.set_page_config(
     page_title="Pilotage des charges",
     layout="wide"
 )
 
-# --------------------------------------------------
-# SUPABASE (ANON KEY)
-# --------------------------------------------------
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
+# ======================================================
+# PATH FIX (Streamlit Cloud)
+# ======================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(BASE_DIR)
 
-supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+# ======================================================
+# SUPABASE (ANON KEY UNIQUEMENT)
+# ======================================================
+@st.cache_resource
+def get_supabase():
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_ANON_KEY"]
+    except KeyError:
+        st.error(
+            "❌ Supabase mal configuré.\n\n"
+            "Vérifie `.streamlit/secrets.toml` :\n"
+            "SUPABASE_URL\n"
+            "SUPABASE_ANON_KEY"
+        )
+        st.stop()
 
-# --------------------------------------------------
-# SIDEBAR
-# --------------------------------------------------
-st.sidebar.title("📊 Pilotage immeuble")
+    return create_client(url, key)
 
-annee = st.sidebar.selectbox(
-    "Année",
-    [2023, 2024, 2025],
-    index=2
-)
+# ======================================================
+# MAIN
+# ======================================================
+def main():
+    supabase = get_supabase()
 
-page = st.sidebar.radio(
-    "Menu",
-    [
+    # ==================================================
+    # SIDEBAR – FILTRES GLOBAUX
+    # ==================================================
+    st.sidebar.title("🔎 Filtres globaux")
+
+    annee = st.sidebar.selectbox(
+        "Année",
+        options=[2024, 2025, 2026],
+        index=1
+    )
+
+    # ==================================================
+    # TITRE
+    # ==================================================
+    st.title("📊 Pilotage des charges de l’immeuble")
+
+    # ==================================================
+    # ONGLET PRINCIPAL
+    # ==================================================
+    (
+        tab_dep,
+        tab_bud,
+        tab_bvr,
+        tab_rep,
+        tab_plan,
+        tab_lots,
+    ) = st.tabs([
         "📄 Dépenses",
-        "💰 Budgets",
+        "💰 Budget",
+        "📊 Budget vs Réel",
+        "🏢 Répartition par lot",
         "📘 Plan comptable",
-        "📊 Répartition par lot",
-        "✅ Contrôle"
-    ]
-)
+        "🏠 Lots",
+    ])
 
-# --------------------------------------------------
-# ROUTING
-# --------------------------------------------------
-if page == "📄 Dépenses":
-    depenses_ui(supabase, annee)
+    # ==================================================
+    # DÉPENSES
+    # ==================================================
+    with tab_dep:
+        try:
+            from utils.depenses_ui import depenses_ui
+            depenses_ui(supabase, annee)
+        except Exception as e:
+            st.error("❌ Erreur dans le module Dépenses")
+            st.exception(e)
 
-elif page == "💰 Budgets":
-    budgets_ui(supabase, annee)
+    # ==================================================
+    # BUDGET
+    # ==================================================
+    with tab_bud:
+        try:
+            from utils.budget_ui import budget_ui
+            budget_ui(supabase, annee)
+        except Exception as e:
+            st.error("❌ Erreur dans le module Budget")
+            st.exception(e)
 
-elif page == "📘 Plan comptable":
-    plan_comptable_ui(supabase)
+    # ==================================================
+    # BUDGET VS RÉEL
+    # ==================================================
+    with tab_bvr:
+        try:
+            from utils.budget_vs_reel_ui import budget_vs_reel_ui
+            budget_vs_reel_ui(supabase, annee)
+        except Exception as e:
+            st.error("❌ Erreur dans le module Budget vs Réel")
+            st.exception(e)
 
-elif page == "📊 Répartition par lot":
-    repartition_par_lot_ui(supabase, annee)
+    # ==================================================
+    # RÉPARTITION PAR LOT
+    # ==================================================
+    with tab_rep:
+        try:
+            from utils.repartition_lots_ui import repartition_lots_ui
+            repartition_lots_ui(supabase, annee)
+        except Exception as e:
+            st.error("❌ Erreur dans le module Répartition par lot")
+            st.exception(e)
 
-elif page == "✅ Contrôle":
-    controle_repartition_ui(supabase, annee)
+    # ==================================================
+    # PLAN COMPTABLE
+    # ==================================================
+    with tab_plan:
+        try:
+            from utils.plan_comptable_ui import plan_comptable_ui
+            plan_comptable_ui(supabase)
+        except Exception as e:
+            st.error("❌ Erreur dans le module Plan comptable")
+            st.exception(e)
+
+    # ==================================================
+    # LOTS
+    # ==================================================
+    with tab_lots:
+        try:
+            from utils.lots_ui import lots_ui
+            lots_ui(supabase)
+        except Exception as e:
+            st.error("❌ Erreur dans le module Lots")
+            st.exception(e)
+
+
+# ======================================================
+# RUN
+# ======================================================
+if __name__ == "__main__":
+    main()
