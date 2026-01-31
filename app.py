@@ -2,6 +2,9 @@ import sys
 import os
 import streamlit as st
 
+import streamlit as st
+st.success("🚀 app.py chargé correctement")
+
 # =========================
 # FIX PYTHONPATH (CRITIQUE)
 # =========================
