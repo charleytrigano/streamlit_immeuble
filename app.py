@@ -40,15 +40,15 @@ supabase = init_supabase()
 # IMPORT UI (SAFE)
 # =========================
 try:
-    from utils.depenses_ui import depenses_ui
-    from utils.budget_ui import budget_ui
-    from utils.plan_comptable_ui import plan_comptable_ui
-    from utils.lots_ui import lots_ui
-    from utils.repartition_lots_ui import repartition_lots_ui
-    from utils.controle_repartition_ui import controle_repartition_ui
-    from utils.charges_par_lot_ui import charges_par_lot_ui
-    from utils.appels_fonds_trimestre_ui import appels_fonds_trimestre_ui
-    from utils.statistiques_ui import statistiques_ui
+    from depenses_ui import depenses_ui
+    from budget_ui import budget_ui
+    from plan_comptable_ui import plan_comptable_ui
+    from lots_ui import lots_ui
+    from repartition_lots_ui import repartition_lots_ui
+    from controle_repartition_ui import controle_repartition_ui
+    from charges_par_lot_ui import charges_par_lot_ui
+    from appels_fonds_trimestre_ui import appels_fonds_trimestre_ui
+    from statistiques_ui import statistiques_ui
 except Exception as e:
     st.error("❌ Erreur d'import des modules UI")
     st.exception(e)
