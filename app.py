@@ -1,4 +1,10 @@
 import streamlit as st
+
+import sys
+import os
+
+sys.path.append(os.path.dirname(__file__))
+
 from supabase import create_client
 from utils.depenses_ui import depenses_ui
 from utils.budgets_ui import budgets_ui
