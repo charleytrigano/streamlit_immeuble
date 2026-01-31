@@ -1,5 +1,5 @@
 import streamlit as st
 
-def appels_fonds_trimestriels_ui():
+def appels_fonds_ui(supabase):
     st.header("📢 Appels de fonds trimestriels")
-    st.success("Module Appels de fonds trimestriels chargé correctement")
+    st.info("Si tu vois ce message, tout est OK.")
