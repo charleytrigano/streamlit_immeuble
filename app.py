@@ -1,18 +1,22 @@
 import streamlit as st
 from supabase import create_client
 
-@st.cache_resource
-def get_supabase():
-    try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_ANON_KEY"]
-    except KeyError as e:
-        st.error("❌ Clé manquante dans st.secrets")
-        st.code(str(e))
-        st.stop()
+st.set_page_config(page_title="Test Supabase", layout="wide")
 
-    return create_client(url, key)
+st.title("🔍 Test configuration Supabase")
 
-supabase = get_supabase()
+st.subheader("Contenu de st.secrets :")
+st.write(st.secrets)
 
-st.success("✅ Supabase connecté correctement")
+try:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_ANON_KEY"]
+    st.success("✅ Clés trouvées dans st.secrets")
+except KeyError as e:
+    st.error("❌ Clé manquante dans st.secrets")
+    st.code(str(e))
+    st.stop()
+
+supabase = create_client(url, key)
+
+st.success("🚀 Connexion Supabase OK")
