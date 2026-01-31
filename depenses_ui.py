@@ -6,7 +6,7 @@ def depenses_ui(supabase, annee):
     st.title("💸 Dépenses par groupe de charges")
 
     # =========================
-    # Chargement depuis la VUE
+    # Chargement depuis la vue
     # =========================
     resp = (
         supabase
@@ -23,51 +23,61 @@ def depenses_ui(supabase, annee):
     df = pd.DataFrame(resp.data)
 
     # =========================
-    # Sécurité minimale
+    # Vérification minimale
     # =========================
-    required_cols = {"groupe_charges", "montant_ttc"}
-    if not required_cols.issubset(df.columns):
-        st.error(
-            "La vue v_depenses_par_groupe_charges ne contient pas les colonnes attendues : "
-            + ", ".join(required_cols)
-        )
-        st.dataframe(df.head())
+    colonnes_attendues = {"groupe_charges", "montant_ttc"}
+    if not colonnes_attendues.issubset(df.columns):
+        st.error("Colonnes manquantes dans la vue.")
+        st.write("Colonnes disponibles :", list(df.columns))
         return
 
     # =========================
-    # Filtre groupe de charges
+    # FILTRE GROUPE DE CHARGES
     # =========================
-    groupes = ["Tous"] + sorted(df["groupe_charges"].dropna().unique().tolist())
-    groupe_sel = st.selectbox("Groupe de charges", groupes)
+    st.sidebar.subheader("🔎 Filtres")
+
+    groupes = ["Tous"] + sorted(
+        df["groupe_charges"]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+    )
+
+    groupe_sel = st.sidebar.selectbox(
+        "Groupe de charges",
+        groupes
+    )
 
     if groupe_sel != "Tous":
-        df = df[df["groupe_charges"] == groupe_sel]
+        df = df[df["groupe_charges"].astype(str) == groupe_sel]
 
     # =========================
-    # Tableau
+    # Agrégation
     # =========================
-    st.subheader("📊 Dépenses")
-
-    df_view = (
+    df_group = (
         df
         .groupby("groupe_charges", as_index=False)
-        .agg(
-            total_depenses=("montant_ttc", "sum")
-        )
+        .agg(total_depenses=("montant_ttc", "sum"))
         .sort_values("total_depenses", ascending=False)
     )
 
+    # =========================
+    # Affichage
+    # =========================
+    st.subheader("📊 Dépenses par groupe de charges")
+
     st.dataframe(
-        df_view,
+        df_group,
         use_container_width=True
     )
 
     # =========================
     # KPI
     # =========================
-    total = df_view["total_depenses"].sum()
+    total = df_group["total_depenses"].sum()
 
     st.metric(
-        "Total dépenses (€)",
+        "Total des dépenses (€)",
         f"{total:,.2f}"
     )
