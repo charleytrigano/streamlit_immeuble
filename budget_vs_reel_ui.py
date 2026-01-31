@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
 
+
 def euro(x):
-    if pd.isna(x):
-        return "0,00 €"
     return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
 
 
@@ -11,9 +10,9 @@ def budget_vs_reel_ui(supabase, annee):
     st.subheader(f"📊 Budget vs Réel – {annee}")
 
     # =====================================================
-    # RÉEL : vue enrichie
+    # RÉEL (vue enrichie)
     # =====================================================
-    rep_reel = (
+    r_reel = (
         supabase
         .table("v_depenses_enrichies")
         .select(
@@ -23,54 +22,75 @@ def budget_vs_reel_ui(supabase, annee):
         .execute()
     )
 
-    if not rep_reel.data:
-        st.warning("Aucune dépense pour cette année.")
+    if not r_reel.data:
+        st.warning("Aucune dépense réelle.")
         return
 
-    df_reel = pd.DataFrame(rep_reel.data)
+    df_reel = pd.DataFrame(r_reel.data)
 
     # =====================================================
-    # BUDGET : TABLE budget (SINGULIER)
+    # BUDGET (SANS groupe_charges)
     # =====================================================
-    rep_bud = (
+    r_budget = (
         supabase
-        .table("budget")   # ✅ CORRECTION ICI
+        .table("budget")
         .select(
-            "annee, groupe_compte, groupe_charges, budget"
+            "annee, groupe_compte, budget"
         )
         .eq("annee", annee)
         .execute()
     )
 
-    if not rep_bud.data:
-        st.warning("Aucun budget pour cette année.")
+    if not r_budget.data:
+        st.warning("Aucun budget.")
         return
 
-    df_bud = pd.DataFrame(rep_bud.data)
+    df_budget = pd.DataFrame(r_budget.data)
+
+    # =====================================================
+    # PLAN COMPTABLE (pour rattacher groupe_charges)
+    # =====================================================
+    r_plan = (
+        supabase
+        .table("plan_comptable")
+        .select("groupe_compte, groupe_charges")
+        .execute()
+    )
+
+    df_plan = pd.DataFrame(r_plan.data).drop_duplicates()
+
+    # =====================================================
+    # ENRICHISSEMENT DU BUDGET
+    # =====================================================
+    df_budget = df_budget.merge(
+        df_plan,
+        on="groupe_compte",
+        how="left"
+    )
 
     # =====================================================
     # FILTRE GROUPE DE CHARGES
     # =====================================================
-    groupes_charges = (
+    groupes = (
         ["Tous"]
         + sorted(
-            set(df_reel["groupe_charges"].dropna().unique())
-            | set(df_bud["groupe_charges"].dropna().unique())
+            set(df_reel["groupe_charges"].dropna())
+            | set(df_budget["groupe_charges"].dropna())
         )
     )
 
     groupe_sel = st.selectbox(
         "Groupe de charges",
-        groupes_charges,
+        groupes,
         key="bvr_groupe_charges"
     )
 
     if groupe_sel != "Tous":
         df_reel = df_reel[df_reel["groupe_charges"] == groupe_sel]
-        df_bud = df_bud[df_bud["groupe_charges"] == groupe_sel]
+        df_budget = df_budget[df_budget["groupe_charges"] == groupe_sel]
 
     # =====================================================
-    # AGRÉGATION
+    # AGRÉGATIONS
     # =====================================================
     reel_grp = (
         df_reel
@@ -79,13 +99,13 @@ def budget_vs_reel_ui(supabase, annee):
     )
 
     bud_grp = (
-        df_bud
+        df_budget
         .groupby(["groupe_charges", "groupe_compte"], as_index=False)
         .agg(budget=("budget", "sum"))
     )
 
     # =====================================================
-    # MERGE
+    # MERGE FINAL
     # =====================================================
     df = (
         pd.merge(
@@ -106,22 +126,22 @@ def budget_vs_reel_ui(supabase, annee):
     # =====================================================
     # KPI
     # =====================================================
-    col1, col2, col3, col4 = st.columns(4)
+    c1, c2, c3, c4 = st.columns(4)
 
-    col1.metric("Budget", euro(df["budget"].sum()))
-    col2.metric("Réel", euro(df["reel"].sum()))
-    col3.metric("Écart", euro(df["écart"].sum()))
+    c1.metric("Budget", euro(df["budget"].sum()))
+    c2.metric("Réel", euro(df["reel"].sum()))
+    c3.metric("Écart", euro(df["écart"].sum()))
 
     pct = (
         df["écart"].sum() / df["budget"].sum() * 100
         if df["budget"].sum() != 0 else 0
     )
-    col4.metric("% écart", f"{pct:.2f} %")
+    c4.metric("% écart", f"{pct:.2f} %")
 
     # =====================================================
     # TABLEAU
     # =====================================================
-    st.markdown("### 📋 Détail par groupe de comptes")
+    st.markdown("### 📋 Détail par groupe")
 
     df_aff = df.copy()
     df_aff["budget"] = df_aff["budget"].apply(euro)
