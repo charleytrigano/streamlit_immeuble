@@ -3,27 +3,25 @@ import pandas as pd
 
 
 def euro(x):
-    return f"{x:,.2f} €".replace(",", " ").replace(".", ",")
+    try:
+        return f"{float(x):,.2f} €".replace(",", " ").replace(".", ",")
+    except Exception:
+        return "0,00 €"
 
 
 def depenses_ui(supabase, annee):
     st.header(f"📄 Dépenses – {annee}")
 
-    # =========================
-    # CHARGEMENT DÉPENSES
-    # =========================
+    # ======================================================
+    # CHARGEMENT DES DONNÉES
+    # ======================================================
     dep_resp = (
         supabase
         .table("depenses")
-        .select("""
-            depense_id,
-            annee,
-            compte,
-            poste,
-            fournisseur,
-            date,
-            montant_ttc
-        """)
+        .select(
+            "depense_id, annee, compte, poste, fournisseur, date, "
+            "montant_ttc, lot_id"
+        )
         .eq("annee", annee)
         .execute()
     )
@@ -32,141 +30,118 @@ def depenses_ui(supabase, annee):
         st.info("Aucune dépense pour cette année.")
         return
 
-    df = pd.DataFrame(dep_resp.data)
+    df_dep = pd.DataFrame(dep_resp.data)
 
-    # =========================
-    # PLAN COMPTABLE (groupes)
-    # =========================
     plan_resp = (
         supabase
         .table("plan_comptable")
-        .select("""
-            compte_8,
-            groupe_charges,
-            libelle
-        """)
+        .select("compte_8, libelle, groupe_charges")
         .execute()
     )
 
     df_plan = pd.DataFrame(plan_resp.data)
 
-    df = df.merge(
+    # ======================================================
+    # NORMALISATION / JOINTURE
+    # ======================================================
+    df = df_dep.merge(
         df_plan,
         left_on="compte",
         right_on="compte_8",
         how="left"
     )
 
-    # =========================
-    # LIBELLÉS DES GROUPES
-    # =========================
-    groupes = {
-        1: "Charges communes générales",
-        2: "Charges spéciales RDC / sous-sols",
-        3: "Charges spéciales sous-sols",
-        4: "Ascenseurs",
-        5: "Charges garages / parkings",
-        6: "Monte-voitures",
-    }
+    df["groupe_charges"] = df["groupe_charges"].fillna("Non affecté")
 
-    df["groupe_charges_label"] = df["groupe_charges"].map(groupes)
-
-    # =========================
+    # ======================================================
     # FILTRES
-    # =========================
-    st.markdown("### 🔎 Filtres")
+    # ======================================================
+    st.subheader("🔎 Filtres")
 
-    col1, col2, col3 = st.columns(3)
+    colf1, colf2, colf3 = st.columns(3)
 
-    f_groupes = sorted(df["groupe_charges_label"].dropna().unique())
-    f_comptes = sorted(df["compte"].dropna().unique())
-    f_fournisseurs = sorted(df["fournisseur"].dropna().unique())
+    with colf1:
+        fournisseurs = ["Tous"] + sorted(df["fournisseur"].dropna().unique())
+        fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
 
-    sel_groupes = col1.multiselect(
-        "Groupe de charges",
-        ["Tous"] + f_groupes,
-        default=["Tous"]
-    )
+    with colf2:
+        groupes = ["Tous"] + sorted(df["groupe_charges"].dropna().unique())
+        groupe_sel = st.selectbox("Groupe de charges", groupes)
 
-    sel_comptes = col2.multiselect(
-        "Compte",
-        ["Tous"] + f_comptes,
-        default=["Tous"]
-    )
-
-    sel_fournisseurs = col3.multiselect(
-        "Fournisseur",
-        ["Tous"] + f_fournisseurs,
-        default=["Tous"]
-    )
+    with colf3:
+        comptes = ["Tous"] + sorted(df["compte"].dropna().unique())
+        compte_sel = st.selectbox("Compte comptable", comptes)
 
     df_f = df.copy()
 
-    if "Tous" not in sel_groupes:
-        df_f = df_f[df_f["groupe_charges_label"].isin(sel_groupes)]
+    if fournisseur_sel != "Tous":
+        df_f = df_f[df_f["fournisseur"] == fournisseur_sel]
 
-    if "Tous" not in sel_comptes:
-        df_f = df_f[df_f["compte"].isin(sel_comptes)]
+    if groupe_sel != "Tous":
+        df_f = df_f[df_f["groupe_charges"] == groupe_sel]
 
-    if "Tous" not in sel_fournisseurs:
-        df_f = df_f[df_f["fournisseur"].isin(sel_fournisseurs)]
+    if compte_sel != "Tous":
+        df_f = df_f[df_f["compte"] == compte_sel]
 
-    # =========================
+    # ======================================================
     # KPI
-    # =========================
-    total = df_f["montant_ttc"].sum()
-    nb = len(df_f)
-    moy = total / nb if nb else 0
+    # ======================================================
+    total_dep = df_f["montant_ttc"].sum()
+    nb_lignes = len(df_f)
+    dep_moy = total_dep / nb_lignes if nb_lignes else 0
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total dépenses", euro(total))
-    c2.metric("Nombre de lignes", nb)
-    c3.metric("Dépense moyenne", euro(moy))
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total dépenses", euro(total_dep))
+    col2.metric("Nombre de lignes", nb_lignes)
+    col3.metric("Dépense moyenne", euro(dep_moy))
 
-    # =========================
-    # TABLEAU DÉTAIL
-    # =========================
-    st.markdown("### 📋 Détail des dépenses")
+    # ======================================================
+    # TABLEAU DÉTAILLÉ DES DÉPENSES
+    # ======================================================
+    st.subheader("📋 Détail des dépenses")
 
-    st.dataframe(
-        df_f[[
-            "date",
-            "compte",
-            "poste",
-            "fournisseur",
-            "groupe_charges_label",
-            "montant_ttc"
-        ]].rename(columns={
-            "date": "Date",
-            "compte": "Compte",
-            "poste": "Poste",
-            "fournisseur": "Fournisseur",
-            "groupe_charges_label": "Groupe de charges",
-            "montant_ttc": "Montant TTC (€)"
-        }).sort_values("date"),
-        use_container_width=True
-    )
+    df_aff = df_f[[
+        "date",
+        "compte",
+        "libelle",
+        "poste",
+        "fournisseur",
+        "groupe_charges",
+        "montant_ttc",
+        "lot_id"
+    ]].rename(columns={
+        "date": "Date",
+        "compte": "Compte",
+        "libelle": "Libellé compte",
+        "poste": "Poste",
+        "fournisseur": "Fournisseur",
+        "groupe_charges": "Groupe de charges",
+        "montant_ttc": "Montant TTC",
+        "lot_id": "Lot"
+    })
 
-    # =========================
-    # SYNTHÈSE PAR GROUPE
-    # =========================
-    st.markdown("### 📊 Dépenses par groupe de charges")
+    df_aff = df_aff.sort_values("Date")
 
-    synthese = (
+    st.dataframe(df_aff, use_container_width=True)
+
+    # ======================================================
+    # TABLEAU PAR GROUPE DE CHARGES
+    # ======================================================
+    st.subheader("📊 Dépenses par groupe de charges")
+
+    df_grp = (
         df_f
-        .groupby("groupe_charges_label", as_index=False)
+        .groupby("groupe_charges", as_index=False)
         .agg(
             total=("montant_ttc", "sum"),
-            nb=("depense_id", "count")
+            nb_lignes=("depense_id", "count")
         )
         .sort_values("total", ascending=False)
     )
 
+    df_grp["Total"] = df_grp["total"].apply(euro)
+
     st.dataframe(
-        synthese.rename(columns={
-            "groupe_charges_label": "Groupe de charges",
-            "total": "Total (€)",
-            "nb": "Nombre de dépenses"
-        }),
+        df_grp[["groupe_charges", "Total", "nb_lignes"]],
         use_container_width=True
     )
