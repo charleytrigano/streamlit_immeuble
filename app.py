@@ -1,91 +1,110 @@
 import streamlit as st
-from supabase_client import get_supabase_client
-from depenses_ui import depenses_ui
-from depenses_detail_ui import depenses_detail_ui
+import pandas as pd
+from supabase_client import supabase
 
-
+# ======================================================
+# CONFIG
+# ======================================================
 st.set_page_config(
     page_title="Pilotage des charges",
-    layout="wide",
+    layout="wide"
 )
 
-supabase = get_supabase_client()
+st.title("📊 Pilotage des charges – Dépenses")
 
 # ======================================================
-# Sidebar – Filtres globaux
+# CHARGEMENT DES DONNÉES
 # ======================================================
-st.sidebar.title("🔎 Filtres globaux")
-
-annee = st.sidebar.selectbox("Année", [2023, 2024, 2025], index=2)
-
-# ======================================================
-# Chargement sécurisé des valeurs de filtres
-# ======================================================
-rows = []
-
-try:
-    response = (
+@st.cache_data
+def load_depenses():
+    res = (
         supabase
-        .table("v_depenses_detail")
-        .select("annee, groupe_charges, groupe_compte, compte")
-        .eq("annee", annee)
+        .from_("v_depenses_enrichies")
+        .select("*")
         .execute()
     )
-    rows = response.data or []
+    return pd.DataFrame(res.data)
 
-except Exception as e:
-    st.sidebar.error("Impossible de charger les filtres depuis la base")
-    st.sidebar.code(str(e))
+df = load_depenses()
 
-
-def unique_values(col):
-    return sorted({r[col] for r in rows if r.get(col) is not None})
-
-
-groupe_charges = st.sidebar.selectbox(
-    "Groupe de charges",
-    ["Tous"] + unique_values("groupe_charges")
-)
-
-groupe_compte = st.sidebar.selectbox(
-    "Groupe de compte",
-    ["Tous"] + unique_values("groupe_compte")
-)
-
-compte = st.sidebar.selectbox(
-    "Compte",
-    ["Tous"] + unique_values("compte")
-)
+if df.empty:
+    st.warning("Aucune dépense disponible.")
+    st.stop()
 
 # ======================================================
-# App principale
+# FILTRES GLOBAUX
 # ======================================================
-def main():
-    st.title("📊 Pilotage des charges – Dépenses")
+st.sidebar.header("🔎 Filtres")
 
-    tabs = st.tabs([
-        "📊 Dépenses par groupe de charges",
-        "📄 Détail des dépenses",
-    ])
+annees = sorted(df["annee"].dropna().unique().tolist())
+annee_sel = st.sidebar.selectbox("Année", annees)
 
-    with tabs[0]:
-        depenses_ui(
-            supabase=supabase,
-            annee=annee,
-            groupe_charges=groupe_charges,
-            groupe_compte=groupe_compte,
-            compte=compte,
-        )
+groupes_charges = ["Tous"] + sorted(df["groupe_charges"].dropna().unique().tolist())
+groupe_charges_sel = st.sidebar.selectbox("Groupe de charges", groupes_charges)
 
-    with tabs[1]:
-        depenses_detail_ui(
-            supabase=supabase,
-            annee=annee,
-            groupe_charges=groupe_charges,
-            groupe_compte=groupe_compte,
-            compte=compte,
-        )
+groupes_compte = ["Tous"] + sorted(df["groupe_compte"].dropna().unique().tolist())
+groupe_compte_sel = st.sidebar.selectbox("Groupe de compte", groupes_compte)
 
+# ======================================================
+# APPLICATION DES FILTRES
+# ======================================================
+df_filtree = df[df["annee"] == annee_sel]
 
-if __name__ == "__main__":
-    main()
+if groupe_charges_sel != "Tous":
+    df_filtree = df_filtree[df_filtree["groupe_charges"] == groupe_charges_sel]
+
+if groupe_compte_sel != "Tous":
+    df_filtree = df_filtree[df_filtree["groupe_compte"] == groupe_compte_sel]
+
+# ======================================================
+# ONGLET
+# ======================================================
+tab1, tab2 = st.tabs([
+    "💰 Dépenses par groupe de charges",
+    "📋 Détail des dépenses"
+])
+
+# ======================================================
+# ONGLET 1 — AGRÉGATION
+# ======================================================
+with tab1:
+    st.subheader("💰 Dépenses par groupe de charges")
+
+    df_group = (
+        df_filtree
+        .groupby("groupe_charges", as_index=False)["montant_ttc"]
+        .sum()
+        .rename(columns={"montant_ttc": "total_depenses"})
+        .sort_values("total_depenses", ascending=False)
+    )
+
+    st.dataframe(
+        df_group,
+        use_container_width=True
+    )
+
+    st.metric(
+        "Total général",
+        f"{df_group['total_depenses'].sum():,.2f} €"
+    )
+
+# ======================================================
+# ONGLET 2 — DÉTAIL
+# ======================================================
+with tab2:
+    st.subheader("📋 Détail des dépenses")
+
+    colonnes = [
+        "date",
+        "compte",
+        "libelle_compte",
+        "poste",
+        "groupe_charges",
+        "groupe_compte",
+        "montant_ttc"
+    ]
+
+    st.dataframe(
+        df_filtree[colonnes].sort_values("date"),
+        use_container_width=True
+    )
