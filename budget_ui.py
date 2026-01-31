@@ -5,6 +5,7 @@ import pandas as pd
 def budgets_ui(supabase, annee):
     st.subheader(f"📊 Budget – {annee}")
 
+    st.success("budget_ui.py chargé")
     res = (
         supabase
         .table("budgets")
