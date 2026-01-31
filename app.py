@@ -10,21 +10,19 @@ st.set_page_config(
 )
 
 # =========================================================
-# SUPABASE — INITIALISATION DIRECTE (SANS IMPORT LOCAL)
+# SUPABASE — CONNEXION DIRECTE
 # =========================================================
 def get_supabase() -> Client:
     try:
         url = st.secrets["supabase_url"]
         key = st.secrets["supabase_anon_key"]
     except KeyError as e:
-        st.error(f"❌ Clé Supabase manquante dans st.secrets : {e}")
+        st.error(f"❌ Clé Supabase manquante : {e}")
         st.stop()
 
     return create_client(url, key)
 
-
 supabase = get_supabase()
-st.success("✅ Supabase connecté correctement")
 
 # =========================================================
 # FILTRES GLOBAUX
@@ -35,7 +33,7 @@ annee = st.sidebar.selectbox(
     "Année",
     [2023, 2024, 2025],
     index=2,
-    key="filtre_annee"
+    key="filtre_annee_global"
 )
 
 # =========================================================
@@ -55,37 +53,20 @@ page = st.sidebar.radio(
 )
 
 # =========================================================
-# CHARGEMENT SÉCURISÉ DES MODULES UI
-# =========================================================
-def safe_import(module_name, func_name):
-    try:
-        module = __import__(module_name, fromlist=[func_name])
-        return getattr(module, func_name)
-    except Exception as e:
-        st.error(f"❌ Impossible de charger {module_name}.{func_name}")
-        st.exception(e)
-        return None
-
-
-# =========================================================
-# ROUTAGE DES PAGES
+# ROUTAGE
 # =========================================================
 if page == "📄 Dépenses":
-    ui = safe_import("depenses_ui", "depenses_ui")
-    if ui:
-        ui(supabase, annee)
+    from depenses_ui import depenses_ui
+    depenses_ui(supabase, annee)
 
 elif page == "💰 Budget":
-    ui = safe_import("budget_ui", "budget_ui")
-    if ui:
-        ui(supabase, annee)
+    from budget_ui import budget_ui
+    budget_ui(supabase, annee)
 
 elif page == "📊 Budget vs Réel":
-    ui = safe_import("budget_vs_reel_ui", "budget_vs_reel_ui")
-    if ui:
-        ui(supabase, annee)
+    from budget_vs_reel_ui import budget_vs_reel_ui
+    budget_vs_reel_ui(supabase, annee)
 
 elif page == "📘 Plan comptable":
-    ui = safe_import("plan_comptable_ui", "plan_comptable_ui")
-    if ui:
-        ui(supabase)
+    from plan_comptable_ui import plan_comptable_ui
+    plan_comptable_ui(supabase)
