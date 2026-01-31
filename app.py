@@ -1,116 +1,50 @@
 import streamlit as st
-import pandas as pd
+from supabase import create_client
 
-TAUX_ALUR = 0.05
-BASE_TANTIEMES = 10000
+# =========================
+# CONFIG STREAMLIT
+# =========================
+st.set_page_config(
+    page_title="Pilotage des charges",
+    layout="wide"
+)
 
-
-def appels_fonds_ui(supabase):
-    st.header("📢 Appels de fonds trimestriels")
-
-    # =========================
-    # Paramètres
-    # =========================
-    annee = st.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
-    trimestre = st.selectbox("Trimestre", [1, 2, 3, 4], index=0)
-
-    # =========================
-    # Budget annuel
-    # =========================
-    bud_resp = (
-        supabase
-        .table("budgets")
-        .select("budget")
-        .eq("annee", annee)
-        .execute()
-    )
-
-    if not bud_resp.data:
-        st.warning("Aucun budget enregistré pour cette année.")
-        return
-
-    budget_annuel = sum(b["budget"] for b in bud_resp.data)
-    montant_alur = budget_annuel * TAUX_ALUR
-    total_a_appeler = budget_annuel + montant_alur
-    appel_trimestriel = total_a_appeler / 4
-
-    # =========================
-    # Lots
-    # =========================
-    lots_resp = (
-        supabase
-        .table("lots")
-        .select("lot_id, lot, proprietaire, tantiemes")
-        .execute()
-    )
-
-    if not lots_resp.data:
-        st.warning("Aucun lot trouvé.")
-        return
-
-    df_lots = pd.DataFrame(lots_resp.data)
-
-    # Sécurité
-    df_lots["tantiemes"] = pd.to_numeric(df_lots["tantiemes"], errors="coerce").fillna(0)
-
-    # =========================
-    # Calcul appels par lot
-    # =========================
-    df_lots["part_lot"] = (
-        appel_trimestriel * df_lots["tantiemes"] / BASE_TANTIEMES
-    )
-
-    # =========================
-    # Tableau par propriétaire
-    # =========================
-    df_owner = (
-        df_lots
-        .groupby("proprietaire", as_index=False)
-        .agg(
-            tantiemes=("tantiemes", "sum"),
-            appel=("part_lot", "sum")
+# =========================
+# SUPABASE (ANON KEY)
+# =========================
+@st.cache_resource
+def get_supabase():
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_ANON_KEY"]
+    except KeyError:
+        st.error(
+            "❌ Supabase mal configuré.\n\n"
+            "Vérifie `.streamlit/secrets.toml` avec :\n"
+            "SUPABASE_URL\n"
+            "SUPABASE_ANON_KEY"
         )
-    )
+        st.stop()
 
-    # =========================
-    # Affichage KPI
-    # =========================
-    col1, col2, col3, col4 = st.columns(4)
+    return create_client(url, key)
 
-    col1.metric("Budget annuel", f"{budget_annuel:,.2f} €".replace(",", " "))
-    col2.metric("Loi ALUR (5 %)", f"{montant_alur:,.2f} €".replace(",", " "))
-    col3.metric("Total annuel", f"{total_a_appeler:,.2f} €".replace(",", " "))
-    col4.metric(
-        f"Appel T{trimestre}",
-        f"{appel_trimestriel:,.2f} €".replace(",", " ")
-    )
+# =========================
+# MAIN
+# =========================
+def main():
+    supabase = get_supabase()
 
-    # =========================
-    # Tableau final
-    # =========================
-    st.markdown("### 📄 Détail des appels par propriétaire")
+    st.title("📊 Pilotage des charges de l’immeuble")
 
-    table = df_owner.rename(columns={
-        "proprietaire": "Propriétaire",
-        "tantiemes": "Tantièmes",
-        "appel": f"Appel T{trimestre} (€)"
-    })
+    # ===== ONGLET UNIQUE POUR TEST =====
+    tab = st.tabs(["📢 Appels de fonds trimestriels"])[0]
 
-    # Ligne TOTAL
-    total_row = pd.DataFrame([{
-        "Propriétaire": "TOTAL",
-        "Tantièmes": table["Tantièmes"].sum(),
-        f"Appel T{trimestre} (€)": table[f"Appel T{trimestre} (€)"].sum()
-    }])
+    with tab:
+        from appels_fonds_ui import appels_fonds_ui
+        appels_fonds_ui(supabase)
 
-    table = pd.concat([table, total_row], ignore_index=True)
-
-    st.dataframe(table, use_container_width=True)
-
-    # =========================
-    # Contrôle
-    # =========================
-    st.caption(
-        "✔ Répartition proportionnelle aux tantièmes — "
-        "Budget + Loi ALUR répartis trimestriellement."
-    )
+# =========================
+# RUN
+# =========================
+if __name__ == "__main__":
+    main()
