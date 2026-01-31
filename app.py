@@ -1,111 +1,131 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client
+from supabase import create_client, Client
 
-# =========================
-# CONFIG
-# =========================
+# --------------------------------------------------
+# CONFIG STREAMLIT
+# --------------------------------------------------
 st.set_page_config(
     page_title="Pilotage des charges",
     layout="wide"
 )
 
-# =========================
-# SUPABASE (ANON KEY)
-# =========================
+st.title("📊 Pilotage des charges de l’immeuble")
+
+# --------------------------------------------------
+# SUPABASE CONNECTION (ANON KEY)
+# --------------------------------------------------
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_ANON_KEY"]
+SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase: Client = create_client(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY
+)
 
-ANNEE = 2025
+# --------------------------------------------------
+# PARAMÈTRES
+# --------------------------------------------------
+annee = st.selectbox(
+    "Année",
+    options=[2023, 2024, 2025],
+    index=2
+)
 
-# =========================
-# HELPERS
-# =========================
-@st.cache_data(ttl=60)
-def load_repartition(annee: int):
-    return (
-        supabase
-        .table("repartition_par_lot")
-        .select("*")
-        .eq("annee", annee)
-        .order("groupe_compte")
-        .order("lot")
-        .execute()
-        .data
-    )
-
-@st.cache_data(ttl=60)
-def load_controle(annee: int):
-    return (
-        supabase
-        .table("repartition_par_lot_controle")
-        .select("*")
-        .eq("annee", annee)
-        .order("groupe_compte")
-        .execute()
-        .data
-    )
-
-# =========================
-# UI
-# =========================
-st.title("🏢 Pilotage des charges de l’immeuble")
-
+# --------------------------------------------------
+# ONGLET
+# --------------------------------------------------
 tab1, tab2 = st.tabs([
-    "📊 Répartition par lot",
-    "✅ Contrôles budgétaires"
+    "📋 Répartition par lot",
+    "✅ Contrôle répartition"
 ])
 
-# =========================
-# TAB 1 — RÉPARTITION
-# =========================
+# ==================================================
+# ONGLET 1 — RÉPARTITION PAR LOT
+# ==================================================
 with tab1:
-    data = load_repartition(ANNEE)
-    df = pd.DataFrame(data)
+    st.subheader("Répartition des charges par lot")
 
-    if df.empty:
-        st.warning("Aucune donnée de répartition.")
-    else:
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True
+    try:
+        res = (
+            supabase
+            .table("repartition_par_lot")
+            .select("*")
+            .eq("annee", annee)
+            .order("groupe_compte")
+            .order("lot")
+            .execute()
         )
 
-        st.download_button(
-            "⬇️ Export CSV",
-            df.to_csv(index=False).encode("utf-8"),
-            file_name=f"repartition_lots_{ANNEE}.csv",
-            mime="text/csv"
-        )
-
-# =========================
-# TAB 2 — CONTROLES
-# =========================
-with tab2:
-    data = load_controle(ANNEE)
-    df = pd.DataFrame(data)
-
-    if df.empty:
-        st.warning("Aucun contrôle disponible.")
-    else:
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True
-        )
-
-        erreurs = df[df["statut"] != "OK"]
-        if not erreurs.empty:
-            st.error("⚠️ Des incohérences ont été détectées.")
+        if not res.data:
+            st.info("Aucune donnée disponible")
         else:
-            st.success("✅ Tous les groupes sont cohérents.")
+            df = pd.DataFrame(res.data)
 
-        st.download_button(
-            "⬇️ Export contrôles CSV",
-            df.to_csv(index=False).encode("utf-8"),
-            file_name=f"controle_repartition_{ANNEE}.csv",
-            mime="text/csv"
+            # Mise en forme
+            df = df.rename(columns={
+                "lot": "Lot",
+                "groupe_compte": "Groupe",
+                "libelle_groupe": "Libellé",
+                "tantiemes": "Tantièmes",
+                "part_lot": "Part (€)"
+            })
+
+            st.dataframe(
+                df,
+                use_container_width=True
+            )
+
+    except Exception as e:
+        st.error("Erreur lors du chargement de la répartition")
+        st.exception(e)
+
+# ==================================================
+# ONGLET 2 — CONTRÔLE
+# ==================================================
+with tab2:
+    st.subheader("Contrôle des répartitions")
+
+    try:
+        res_ctrl = (
+            supabase
+            .table("repartition_par_lot_controle")
+            .select("*")
+            .eq("annee", annee)
+            .order("groupe_compte")
+            .execute()
         )
+
+        if not res_ctrl.data:
+            st.info("Aucune donnée de contrôle")
+        else:
+            df_ctrl = pd.DataFrame(res_ctrl.data)
+
+            df_ctrl = df_ctrl.rename(columns={
+                "groupe_compte": "Groupe",
+                "budget": "Budget (€)",
+                "total_reparti": "Total réparti (€)",
+                "ecart": "Écart (€)",
+                "statut": "Statut"
+            })
+
+            st.dataframe(
+                df_ctrl,
+                use_container_width=True
+            )
+
+            # Alertes
+            erreurs = df_ctrl[df_ctrl["Statut"] != "OK"]
+            if not erreurs.empty:
+                st.warning("⚠️ Des écarts ont été détectés")
+            else:
+                st.success("✅ Toutes les répartitions sont correctes")
+
+    except Exception as e:
+        st.error("Erreur lors du chargement du contrôle")
+        st.exception(e)
+
+# --------------------------------------------------
+# FOOTER
+# --------------------------------------------------
+st.caption("Données issues de Supabase — accès ANON sécurisé par RLS")
