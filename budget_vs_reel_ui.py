@@ -11,17 +11,14 @@ def budget_vs_reel_ui(supabase, annee):
     st.subheader(f"📊 Budget vs Réel – {annee}")
 
     # =====================================================
-    # CHARGEMENT DU RÉEL (vue enrichie)
+    # RÉEL : vue enrichie
     # =====================================================
     rep_reel = (
         supabase
         .table("v_depenses_enrichies")
-        .select("""
-            annee,
-            groupe_compte,
-            groupe_charges,
-            montant_ttc
-        """)
+        .select(
+            "annee, groupe_compte, groupe_charges, montant_ttc"
+        )
         .eq("annee", annee)
         .execute()
     )
@@ -33,17 +30,14 @@ def budget_vs_reel_ui(supabase, annee):
     df_reel = pd.DataFrame(rep_reel.data)
 
     # =====================================================
-    # CHARGEMENT DU BUDGET
+    # BUDGET : TABLE budget (SINGULIER)
     # =====================================================
     rep_bud = (
         supabase
-        .table("budgets")
-        .select("""
-            annee,
-            groupe_compte,
-            groupe_charges,
-            budget
-        """)
+        .table("budget")   # ✅ CORRECTION ICI
+        .select(
+            "annee, groupe_compte, groupe_charges, budget"
+        )
         .eq("annee", annee)
         .execute()
     )
@@ -68,7 +62,7 @@ def budget_vs_reel_ui(supabase, annee):
     groupe_sel = st.selectbox(
         "Groupe de charges",
         groupes_charges,
-        key="filtre_groupe_charges_bvr"
+        key="bvr_groupe_charges"
     )
 
     if groupe_sel != "Tous":
@@ -76,7 +70,7 @@ def budget_vs_reel_ui(supabase, annee):
         df_bud = df_bud[df_bud["groupe_charges"] == groupe_sel]
 
     # =====================================================
-    # AGRÉGATIONS
+    # AGRÉGATION
     # =====================================================
     reel_grp = (
         df_reel
@@ -91,14 +85,17 @@ def budget_vs_reel_ui(supabase, annee):
     )
 
     # =====================================================
-    # MERGE BUDGET / RÉEL
+    # MERGE
     # =====================================================
-    df = pd.merge(
-        bud_grp,
-        reel_grp,
-        on=["groupe_charges", "groupe_compte"],
-        how="outer"
-    ).fillna(0)
+    df = (
+        pd.merge(
+            bud_grp,
+            reel_grp,
+            on=["groupe_charges", "groupe_compte"],
+            how="outer"
+        )
+        .fillna(0)
+    )
 
     df["écart"] = df["budget"] - df["reel"]
     df["% écart"] = df.apply(
@@ -107,7 +104,7 @@ def budget_vs_reel_ui(supabase, annee):
     )
 
     # =====================================================
-    # KPI GLOBAUX
+    # KPI
     # =====================================================
     col1, col2, col3, col4 = st.columns(4)
 
@@ -122,7 +119,7 @@ def budget_vs_reel_ui(supabase, annee):
     col4.metric("% écart", f"{pct:.2f} %")
 
     # =====================================================
-    # TABLEAU DÉTAILLÉ
+    # TABLEAU
     # =====================================================
     st.markdown("### 📋 Détail par groupe de comptes")
 
