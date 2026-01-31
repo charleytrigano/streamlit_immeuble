@@ -1,10 +1,18 @@
 import streamlit as st
 from supabase import create_client
-import os
 
-SUPABASE_URL = st.secrets["SUPABASE_URL"]
-SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+@st.cache_resource
+def get_supabase():
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_ANON_KEY"]
+    except KeyError as e:
+        st.error("❌ Clé manquante dans st.secrets")
+        st.code(str(e))
+        st.stop()
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return create_client(url, key)
 
-st.success("Supabase connecté ✅")
+supabase = get_supabase()
+
+st.success("✅ Supabase connecté correctement")
