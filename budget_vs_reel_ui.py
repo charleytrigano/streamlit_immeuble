@@ -10,15 +10,12 @@ def budget_vs_reel_ui(supabase, annee):
     st.subheader(f"📊 Budget vs Réel – {annee}")
 
     # =====================================================
-    # RÉEL (vue enrichie)
+    # RÉEL – lecture SANS filtre (sécurisé)
     # =====================================================
     r_reel = (
         supabase
         .table("v_depenses_enrichies")
-        .select(
-            "annee, groupe_compte, groupe_charges, montant_ttc"
-        )
-        .eq("annee", annee)
+        .select("annee, groupe_compte, groupe_charges, montant_ttc")
         .execute()
     )
 
@@ -28,16 +25,16 @@ def budget_vs_reel_ui(supabase, annee):
 
     df_reel = pd.DataFrame(r_reel.data)
 
+    # filtre année EN PYTHON
+    df_reel = df_reel[df_reel["annee"] == annee]
+
     # =====================================================
-    # BUDGET (SANS groupe_charges)
+    # BUDGET
     # =====================================================
     r_budget = (
         supabase
         .table("budget")
-        .select(
-            "annee, groupe_compte, budget"
-        )
-        .eq("annee", annee)
+        .select("annee, groupe_compte, budget")
         .execute()
     )
 
@@ -46,9 +43,10 @@ def budget_vs_reel_ui(supabase, annee):
         return
 
     df_budget = pd.DataFrame(r_budget.data)
+    df_budget = df_budget[df_budget["annee"] == annee]
 
     # =====================================================
-    # PLAN COMPTABLE (pour rattacher groupe_charges)
+    # PLAN COMPTABLE → groupe_charges
     # =====================================================
     r_plan = (
         supabase
@@ -59,9 +57,6 @@ def budget_vs_reel_ui(supabase, annee):
 
     df_plan = pd.DataFrame(r_plan.data).drop_duplicates()
 
-    # =====================================================
-    # ENRICHISSEMENT DU BUDGET
-    # =====================================================
     df_budget = df_budget.merge(
         df_plan,
         on="groupe_compte",
@@ -104,9 +99,6 @@ def budget_vs_reel_ui(supabase, annee):
         .agg(budget=("budget", "sum"))
     )
 
-    # =====================================================
-    # MERGE FINAL
-    # =====================================================
     df = (
         pd.merge(
             bud_grp,
