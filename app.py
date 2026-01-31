@@ -18,7 +18,7 @@ if UTILS_DIR not in sys.path:
 # =====================================================
 import streamlit as st
 
-from supabase_client import get_supabase_client
+from utils.supabase_client import get_supabase_client
 
 from budget_ui import budget_ui
 from depenses_ui import depenses_ui
