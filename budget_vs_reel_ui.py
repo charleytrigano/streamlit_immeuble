@@ -12,7 +12,7 @@ def budget_vs_reel_ui(supabase, annee):
     st.subheader(f"📊 Budget vs Réel – {annee}")
 
     # =====================================================
-    # BUDGET (sans groupe_charges)
+    # BUDGET
     # =====================================================
     bud_resp = (
         supabase
@@ -29,7 +29,7 @@ def budget_vs_reel_ui(supabase, annee):
     df_budget = pd.DataFrame(bud_resp.data)
 
     # =====================================================
-    # PLAN COMPTABLE (pour groupe_charges)
+    # PLAN COMPTABLE → groupe_charges
     # =====================================================
     plan_resp = (
         supabase
@@ -40,15 +40,10 @@ def budget_vs_reel_ui(supabase, annee):
 
     df_plan = pd.DataFrame(plan_resp.data).drop_duplicates("groupe_compte")
 
-    # enrichissement budget → groupe_charges
-    df_budget = df_budget.merge(
-        df_plan,
-        on="groupe_compte",
-        how="left"
-    )
+    df_budget = df_budget.merge(df_plan, on="groupe_compte", how="left")
 
     # =====================================================
-    # RÉEL (vue enrichie)
+    # RÉEL
     # =====================================================
     dep_resp = (
         supabase
@@ -65,7 +60,7 @@ def budget_vs_reel_ui(supabase, annee):
     df_dep = pd.DataFrame(dep_resp.data)
 
     # =====================================================
-    # AGRÉGATIONS
+    # AGRÉGATION
     # =====================================================
     bud_grp = (
         df_budget
@@ -79,18 +74,22 @@ def budget_vs_reel_ui(supabase, annee):
         .agg(reel=("montant_ttc", "sum"))
     )
 
-    df = bud_grp.merge(
-        dep_grp,
-        on=["groupe_charges", "groupe_compte"],
-        how="left"
-    )
-
+    df = bud_grp.merge(dep_grp, on=["groupe_charges", "groupe_compte"], how="left")
     df["reel"] = df["reel"].fillna(0)
     df["ecart"] = df["budget"] - df["reel"]
     df["ecart_pct"] = df.apply(
         lambda r: (r["ecart"] / r["budget"] * 100) if r["budget"] else 0,
         axis=1
     )
+
+    # =====================================================
+    # 🔎 FILTRE GROUPE DE CHARGES
+    # =====================================================
+    groupes = ["Tous"] + sorted(df["groupe_charges"].dropna().unique().tolist())
+    groupe_sel = st.selectbox("Groupe de charges", groupes)
+
+    if groupe_sel != "Tous":
+        df = df[df["groupe_charges"] == groupe_sel]
 
     # =====================================================
     # KPI
@@ -100,12 +99,12 @@ def budget_vs_reel_ui(supabase, annee):
     ecart_total = budget_total - reel_total
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Budget total", euro(budget_total))
-    c2.metric("Réel total", euro(reel_total))
+    c1.metric("Budget", euro(budget_total))
+    c2.metric("Réel", euro(reel_total))
     c3.metric("Écart", euro(ecart_total))
 
     # =====================================================
-    # TABLEAU FINAL
+    # TABLEAU
     # =====================================================
     st.dataframe(
         df.sort_values(["groupe_charges", "groupe_compte"]).rename(columns={
