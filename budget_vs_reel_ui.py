@@ -9,15 +9,17 @@ def euro(x):
 
 
 def budget_vs_reel_ui(supabase, annee):
-    st.header(f"📊 Budget vs Réel – {annee}")
+    st.subheader(f"📊 Budget vs Réel – {annee}")
 
-    # ======================================================
-    # BUDGET
-    # ======================================================
+    # =====================================================
+    # CHARGEMENT DES DONNÉES
+    # =====================================================
+
+    # Budget (par groupe_compte + groupe_charges)
     bud_resp = (
         supabase
         .table("budgets")
-        .select("groupe_compte, budget")
+        .select("groupe_compte, groupe_charges, budget")
         .eq("annee", annee)
         .execute()
     )
@@ -26,42 +28,13 @@ def budget_vs_reel_ui(supabase, annee):
         st.warning("Aucun budget pour cette année.")
         return
 
-    df_bud = pd.DataFrame(bud_resp.data)
+    df_budget = pd.DataFrame(bud_resp.data)
 
-    # ======================================================
-    # PLAN COMPTABLE (groupe_charges)
-    # ======================================================
-    plan_resp = (
-        supabase
-        .table("plan_comptable")
-        .select("groupe_compte, groupe_charges")
-        .execute()
-    )
-
-    df_plan = pd.DataFrame(plan_resp.data).drop_duplicates()
-
-    # ======================================================
-    # BUDGET → GROUPE DE CHARGES
-    # ======================================================
-    df_bud = df_bud.merge(
-        df_plan,
-        on="groupe_compte",
-        how="left"
-    )
-
-    df_bud_group = (
-        df_bud
-        .groupby("groupe_charges", as_index=False)
-        .agg(budget=("budget", "sum"))
-    )
-
-    # ======================================================
-    # RÉEL (DÉPENSES)
-    # ======================================================
+    # Dépenses enrichies via le plan comptable
     dep_resp = (
         supabase
-        .table("depenses")
-        .select("depense_id, compte, montant_ttc, date, poste")
+        .from_("v_depenses_enrichies")
+        .select("groupe_compte, groupe_charges, montant_ttc")
         .eq("annee", annee)
         .execute()
     )
@@ -72,89 +45,114 @@ def budget_vs_reel_ui(supabase, annee):
 
     df_dep = pd.DataFrame(dep_resp.data)
 
-    df_dep = df_dep.merge(
-        supabase
-        .table("plan_comptable")
-        .select("compte_8, groupe_charges")
-        .execute()
-        .data,
-        left_on="compte",
-        right_on="compte_8",
-        how="left"
+    # =====================================================
+    # AGRÉGATIONS
+    # =====================================================
+
+    # Budget agrégé
+    bud_grp = (
+        df_budget
+        .groupby(["groupe_charges", "groupe_compte"], as_index=False)
+        .agg(budget=("budget", "sum"))
     )
 
-    df_reel_group = (
+    # Réel agrégé
+    dep_grp = (
         df_dep
-        .groupby("groupe_charges", as_index=False)
+        .groupby(["groupe_charges", "groupe_compte"], as_index=False)
         .agg(reel=("montant_ttc", "sum"))
     )
 
-    # ======================================================
-    # BUDGET VS RÉEL
-    # ======================================================
-    df_bvr = df_bud_group.merge(
-        df_reel_group,
-        on="groupe_charges",
+    # Jointure Budget / Réel
+    df = bud_grp.merge(
+        dep_grp,
+        on=["groupe_charges", "groupe_compte"],
         how="left"
-    ).fillna(0)
+    )
 
-    df_bvr["ecart"] = df_bvr["budget"] - df_bvr["reel"]
-    df_bvr["ecart_pct"] = df_bvr.apply(
-        lambda r: (r["ecart"] / r["budget"] * 100)
-        if r["budget"] != 0 else 0,
+    df["reel"] = df["reel"].fillna(0)
+    df["ecart"] = df["budget"] - df["reel"]
+    df["ecart_pct"] = df.apply(
+        lambda r: (r["ecart"] / r["budget"] * 100) if r["budget"] != 0 else 0,
         axis=1
     )
 
-    # ======================================================
-    # KPI
-    # ======================================================
-    st.subheader("📊 Indicateurs globaux")
+    # =====================================================
+    # KPI GLOBAUX
+    # =====================================================
 
-    total_budget = df_bvr["budget"].sum()
-    total_reel = df_bvr["reel"].sum()
-    ecart = total_budget - total_reel
-    pct = (ecart / total_budget * 100) if total_budget else 0
+    budget_total = df["budget"].sum()
+    reel_total = df["reel"].sum()
+    ecart_total = budget_total - reel_total
+    ecart_pct_total = (ecart_total / budget_total * 100) if budget_total != 0 else 0
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Budget total", euro(total_budget))
-    k2.metric("Réel total", euro(total_reel))
-    k3.metric("Écart", euro(ecart))
-    k4.metric("Écart %", f"{pct:.2f} %")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Budget total", euro(budget_total))
+    col2.metric("Réel total", euro(reel_total))
+    col3.metric("Écart", euro(ecart_total))
+    col4.metric("Écart %", f"{ecart_pct_total:.2f} %")
 
-    # ======================================================
-    # TABLEAU SYNTHÈSE
-    # ======================================================
-    st.subheader("📘 Synthèse par groupe de charges")
+    # =====================================================
+    # LOI ALUR (5 % DU BUDGET TOTAL)
+    # =====================================================
 
-    df_view = df_bvr.copy()
-    df_view["budget"] = df_view["budget"].apply(euro)
-    df_view["reel"] = df_view["reel"].apply(euro)
-    df_view["ecart"] = df_view["ecart"].apply(euro)
-    df_view["ecart_pct"] = df_view["ecart_pct"].round(2).astype(str) + " %"
+    loi_alur = budget_total * 0.05
+
+    st.markdown("### ⚖️ Loi ALUR")
+    st.metric("Provision Loi ALUR (5 %)", euro(loi_alur))
+
+    # =====================================================
+    # TABLEAU PRINCIPAL – PAR GROUPE DE CHARGES
+    # =====================================================
+
+    st.markdown("### 🧾 Synthèse par groupe de charges")
+
+    synthese = (
+        df
+        .groupby("groupe_charges", as_index=False)
+        .agg(
+            Budget=("budget", "sum"),
+            Réel=("reel", "sum")
+        )
+    )
+
+    synthese["Écart"] = synthese["Budget"] - synthese["Réel"]
+    synthese["Écart %"] = synthese.apply(
+        lambda r: (r["Écart"] / r["Budget"] * 100) if r["Budget"] != 0 else 0,
+        axis=1
+    )
 
     st.dataframe(
-        df_view.rename(columns={
-            "groupe_charges": "Groupe de charges",
-            "budget": "Budget",
-            "reel": "Réel",
-            "ecart": "Écart",
-            "ecart_pct": "Écart %"
+        synthese.style.format({
+            "Budget": euro,
+            "Réel": euro,
+            "Écart": euro,
+            "Écart %": "{:.2f} %"
         }),
         use_container_width=True
     )
 
-    # ======================================================
-    # DÉTAIL DU RÉEL
-    # ======================================================
-    st.subheader("📋 Détail des dépenses")
+    # =====================================================
+    # DÉTAIL PAR GROUPE DE COMPTES
+    # =====================================================
+
+    st.markdown("### 🔍 Détail par groupe de comptes")
+
+    df_detail = df.sort_values(["groupe_charges", "groupe_compte"])
 
     st.dataframe(
-        df_dep[[
-            "date",
-            "compte",
-            "poste",
-            "montant_ttc",
-            "groupe_charges"
-        ]].sort_values("date"),
+        df_detail.rename(columns={
+            "groupe_charges": "Groupe de charges",
+            "groupe_compte": "Groupe de compte",
+            "budget": "Budget",
+            "reel": "Réel",
+            "ecart": "Écart",
+            "ecart_pct": "Écart %"
+        }).style.format({
+            "Budget": euro,
+            "Réel": euro,
+            "Écart": euro,
+            "Écart %": "{:.2f} %"
+        }),
         use_container_width=True
     )
