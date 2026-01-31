@@ -10,7 +10,7 @@ def depenses_ui(supabase, annee):
     st.header(f"📄 Dépenses – {annee}")
 
     # ======================================================
-    # CHARGEMENT DES DONNÉES (VUE ENRICHIE UNIQUEMENT)
+    # CHARGEMENT DES DONNÉES (VUE UNIQUE)
     # ======================================================
     resp = (
         supabase
@@ -26,7 +26,6 @@ def depenses_ui(supabase, annee):
 
     df = pd.DataFrame(resp.data)
 
-    # Sécurités
     df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce").fillna(0)
 
     # ======================================================
@@ -34,7 +33,7 @@ def depenses_ui(supabase, annee):
     # ======================================================
     st.subheader("🔎 Filtres")
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         groupes = ["Tous"] + sorted(df["groupe_charges"].dropna().unique().tolist())
@@ -57,10 +56,6 @@ def depenses_ui(supabase, annee):
         compte_sel = st.selectbox("Compte", comptes)
 
     with col3:
-        fournisseurs = ["Tous"] + sorted(df["fournisseur"].dropna().unique().tolist())
-        fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
-
-    with col4:
         postes = ["Tous"] + sorted(df["poste"].dropna().unique().tolist())
         poste_sel = st.selectbox("Poste", postes)
 
@@ -73,11 +68,8 @@ def depenses_ui(supabase, annee):
         df_f = df_f[df_f["groupe_charges"] == groupe_sel]
 
     if compte_sel != "Tous":
-        compte_code = compte_sel.split(" – ")[0]
-        df_f = df_f[df_f["compte"] == compte_code]
-
-    if fournisseur_sel != "Tous":
-        df_f = df_f[df_f["fournisseur"] == fournisseur_sel]
+        code = compte_sel.split(" – ")[0]
+        df_f = df_f[df_f["compte"] == code]
 
     if poste_sel != "Tous":
         df_f = df_f[df_f["poste"] == poste_sel]
@@ -101,7 +93,7 @@ def depenses_ui(supabase, annee):
 
     df_group = (
         df_f
-        .groupby(["groupe_charges"], as_index=False)
+        .groupby("groupe_charges", as_index=False)
         .agg(
             total=("montant_ttc", "sum"),
             nb=("depense_id", "count")
@@ -130,7 +122,6 @@ def depenses_ui(supabase, annee):
         "compte",
         "libelle_compte",
         "poste",
-        "fournisseur",
         "montant_ttc",
         "groupe_charges"
     ]].copy()
@@ -143,7 +134,6 @@ def depenses_ui(supabase, annee):
             "compte": "Compte",
             "libelle_compte": "Libellé compte",
             "poste": "Poste",
-            "fournisseur": "Fournisseur",
             "montant_ttc": "Montant TTC",
             "groupe_charges": "Groupe de charges"
         }),
