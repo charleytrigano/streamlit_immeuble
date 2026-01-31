@@ -10,19 +10,20 @@ st.set_page_config(
 )
 
 # =========================================================
-# SUPABASE — CONNEXION DIRECTE
+# SUPABASE — CLÉS EN MAJUSCULES
 # =========================================================
 def get_supabase() -> Client:
     try:
-        url = st.secrets["supabase_url"]
-        key = st.secrets["supabase_anon_key"]
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_ANON_KEY"]
     except KeyError as e:
-        st.error(f"❌ Clé Supabase manquante : {e}")
+        st.error(f"❌ Clé Supabase manquante dans st.secrets : {e}")
         st.stop()
 
     return create_client(url, key)
 
 supabase = get_supabase()
+st.success("✅ Connexion Supabase OK")
 
 # =========================================================
 # FILTRES GLOBAUX
@@ -33,7 +34,7 @@ annee = st.sidebar.selectbox(
     "Année",
     [2023, 2024, 2025],
     index=2,
-    key="filtre_annee_global"
+    key="filtre_annee"
 )
 
 # =========================================================
@@ -49,7 +50,7 @@ page = st.sidebar.radio(
         "📊 Budget vs Réel",
         "📘 Plan comptable",
     ],
-    key="navigation_principale"
+    key="navigation"
 )
 
 # =========================================================
