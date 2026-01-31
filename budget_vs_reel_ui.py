@@ -2,93 +2,119 @@ import streamlit as st
 import pandas as pd
 
 
-def budget_vs_reel_ui(supabase, annee):
-    st.subheader(f"📊 Budget vs Réel – {annee}")
+def budget_ui(supabase, annee):
+    st.subheader(f"💰 Budget – {annee}")
 
     # =========================
-    # Chargement réel (vue enrichie)
+    # Chargement budgets
     # =========================
-    dep = (
-        supabase
-        .table("v_depenses_enrichies")
-        .select("groupe_compte, groupe_charges, montant_ttc")
-        .eq("annee", annee)
-        .execute()
-    )
-
-    if not dep.data:
-        st.warning("Aucune dépense")
-        return
-
-    df_dep = pd.DataFrame(dep.data)
-
-    # =========================
-    # Chargement budget
-    # =========================
-    bud = (
+    res = (
         supabase
         .table("budgets")
-        .select("groupe_compte, libelle_groupe, budget")
+        .select("id, annee, groupe_compte, libelle_groupe, budget")
         .eq("annee", annee)
         .execute()
     )
 
-    df_bud = pd.DataFrame(bud.data) if bud.data else pd.DataFrame(
-        columns=["groupe_compte", "libelle_groupe", "budget"]
-    )
+    if res.data:
+        df = pd.DataFrame(res.data)
+    else:
+        df = pd.DataFrame(
+            columns=["id", "annee", "groupe_compte", "libelle_groupe", "budget"]
+        )
 
     # =========================
-    # Filtre groupe de charges
+    # FILTRE GROUPE DE COMPTE
     # =========================
-    groupes = ["Tous"] + sorted(df_dep["groupe_charges"].dropna().unique().tolist())
+    groupes = ["Tous"] + sorted(df["groupe_compte"].dropna().unique().tolist())
 
     groupe_sel = st.selectbox(
-        "Groupe de charges",
+        "Filtrer par groupe de compte",
         groupes,
-        key="bvr_groupe_charges"
+        key="budget_groupe_compte"
     )
 
     if groupe_sel != "Tous":
-        df_dep = df_dep[df_dep["groupe_charges"] == groupe_sel]
+        df_filtre = df[df["groupe_compte"] == groupe_sel]
+    else:
+        df_filtre = df.copy()
 
     # =========================
-    # Agrégation
+    # KPI
     # =========================
-    reel = (
-        df_dep
-        .groupby(["groupe_charges", "groupe_compte"], as_index=False)
-        .agg(reel=("montant_ttc", "sum"))
-    )
+    total_budget = df_filtre["budget"].sum() if not df_filtre.empty else 0
 
-    budg = (
-        df_bud
-        .groupby("groupe_compte", as_index=False)
-        .agg(budget=("budget", "sum"))
-    )
-
-    df = reel.merge(budg, on="groupe_compte", how="left")
-    df["budget"] = df["budget"].fillna(0)
-    df["écart"] = df["reel"] - df["budget"]
-    df["écart_%"] = df.apply(
-        lambda r: (r["écart"] / r["budget"] * 100) if r["budget"] != 0 else 0,
-        axis=1
-    )
+    st.metric("Budget total (filtré)", f"{total_budget:,.2f} €")
 
     # =========================
-    # Tableau
+    # TABLEAU
     # =========================
+    st.markdown("### 📋 Lignes de budget")
+
     st.dataframe(
-        df.sort_values(["groupe_charges", "groupe_compte"]),
+        df_filtre.sort_values("groupe_compte"),
         use_container_width=True
     )
 
     # =========================
-    # Totaux
+    # AJOUT
     # =========================
-    st.markdown("### 📊 Totaux")
+    with st.expander("➕ Ajouter une ligne de budget"):
+        col1, col2 = st.columns(2)
 
-    col1, col2, col3 = st.columns(3)
+        with col1:
+            new_groupe_compte = st.text_input("Groupe de compte")
+            new_libelle = st.text_input("Libellé groupe")
 
-    col1.metric("Total Budget", f"{df['budget'].sum():,.2f} €")
-    col2.metric("Total Réel", f"{df['reel'].sum():,.2f} €")
-    col3.metric("Écart global", f"{(df['reel'].sum() - df['budget'].sum()):,.2f} €")
+        with col2:
+            new_budget = st.number_input(
+                "Montant du budget",
+                min_value=0.0,
+                step=100.0
+            )
+
+        if st.button("Ajouter", key="budget_add"):
+            supabase.table("budgets").insert({
+                "annee": annee,
+                "groupe_compte": new_groupe_compte,
+                "libelle_groupe": new_libelle,
+                "budget": new_budget
+            }).execute()
+
+            st.success("Ligne de budget ajoutée")
+            st.rerun()
+
+    # =========================
+    # MODIFIER / SUPPRIMER
+    # =========================
+    st.markdown("### ✏️ Modifier / Supprimer")
+
+    for _, row in df_filtre.iterrows():
+        with st.expander(f"{row['groupe_compte']} – {row['libelle_groupe']}"):
+            new_value = st.number_input(
+                "Budget",
+                value=float(row["budget"]),
+                min_value=0.0,
+                step=100.0,
+                key=f"edit_budget_{row['id']}"
+            )
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if st.button("💾 Enregistrer", key=f"save_{row['id']}"):
+                    supabase.table("budgets").update({
+                        "budget": new_value
+                    }).eq("id", row["id"]).execute()
+
+                    st.success("Budget mis à jour")
+                    st.rerun()
+
+            with col2:
+                if st.button("🗑️ Supprimer", key=f"delete_{row['id']}"):
+                    supabase.table("budgets").delete().eq(
+                        "id", row["id"]
+                    ).execute()
+
+                    st.warning("Ligne supprimée")
+                    st.rerun()
