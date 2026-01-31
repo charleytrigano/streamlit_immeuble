@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
 
 
 def euro(x):
@@ -14,7 +13,7 @@ def depenses_ui(supabase, annee):
     st.header(f"📄 Dépenses – {annee}")
 
     # ======================================================
-    # CHARGEMENT DES DÉPENSES (vue enrichie)
+    # LECTURE : vue enrichie
     # ======================================================
     resp = (
         supabase
@@ -36,7 +35,7 @@ def depenses_ui(supabase, annee):
     # ======================================================
     st.subheader("🔎 Filtres")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
         groupes = ["Tous"] + sorted(df["groupe_charges"].dropna().unique().tolist())
@@ -46,13 +45,6 @@ def depenses_ui(supabase, annee):
         comptes = ["Tous"] + sorted(df["compte"].dropna().unique().tolist())
         compte_sel = st.selectbox("Compte comptable", comptes)
 
-    with col3:
-        if "fournisseur" in df.columns:
-            fournisseurs = ["Tous"] + sorted(df["fournisseur"].dropna().unique().tolist())
-            fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
-        else:
-            fournisseur_sel = "Tous"
-
     df_f = df.copy()
 
     if groupe_sel != "Tous":
@@ -61,112 +53,80 @@ def depenses_ui(supabase, annee):
     if compte_sel != "Tous":
         df_f = df_f[df_f["compte"] == compte_sel]
 
-    if fournisseur_sel != "Tous" and "fournisseur" in df_f.columns:
-        df_f = df_f[df_f["fournisseur"] == fournisseur_sel]
-
     # ======================================================
-    # TABLEAU 1 – BUDGET vs DÉPENSES PAR GROUPE
+    # TABLEAU 1 — DÉPENSES PAR GROUPE DE CHARGES
     # ======================================================
-    st.subheader("💰 Budget vs Dépenses par groupe de charges")
+    st.subheader("📊 Dépenses par groupe de charges")
 
-    # Dépenses agrégées
-    df_dep_group = (
+    df_group = (
         df_f
         .groupby("groupe_charges", as_index=False)
-        .agg(depenses=("montant_ttc", "sum"))
+        .agg(total_depenses=("montant_ttc", "sum"))
     )
 
-    # Budget
-    bud_resp = (
-        supabase
-        .table("budget")
-        .select("annee, groupe_charges, budget")
-        .eq("annee", annee)
-        .execute()
-    )
+    df_group["total_depenses"] = df_group["total_depenses"].apply(euro)
 
-    if bud_resp.data:
-        df_budget = pd.DataFrame(bud_resp.data)
-        df_budget["budget"] = pd.to_numeric(df_budget["budget"], errors="coerce").fillna(0)
-    else:
-        df_budget = pd.DataFrame(columns=["groupe_charges", "budget"])
+    st.dataframe(df_group, use_container_width=True)
 
-    df_bvr = df_dep_group.merge(
-        df_budget,
-        on="groupe_charges",
-        how="left"
-    )
-
-    df_bvr["budget"] = df_bvr["budget"].fillna(0)
-    df_bvr["ecart"] = df_bvr["budget"] - df_bvr["depenses"]
-    df_bvr["ecart_pct"] = df_bvr.apply(
-        lambda r: (r["ecart"] / r["budget"] * 100) if r["budget"] != 0 else 0,
-        axis=1
-    )
-
-    df_bvr_view = df_bvr.copy()
-    df_bvr_view["budget"] = df_bvr_view["budget"].apply(euro)
-    df_bvr_view["depenses"] = df_bvr_view["depenses"].apply(euro)
-    df_bvr_view["ecart"] = df_bvr_view["ecart"].apply(euro)
-    df_bvr_view["ecart_pct"] = df_bvr_view["ecart_pct"].map(lambda x: f"{x:.1f} %")
+    # ======================================================
+    # TABLEAU 2 — DÉTAIL DES DÉPENSES (LECTURE)
+    # ======================================================
+    st.subheader("📋 Détail des dépenses")
 
     st.dataframe(
-        df_bvr_view[
-            ["groupe_charges", "budget", "depenses", "ecart", "ecart_pct"]
-        ],
+        df_f[[
+            "depense_id",
+            "date",
+            "compte",
+            "poste",
+            "montant_ttc",
+            "groupe_charges",
+            "libelle_compte"
+        ]],
         use_container_width=True
     )
 
     # ======================================================
-    # TABLEAU 2 – DÉTAIL DES DÉPENSES (CRUD)
+    # CRUD — ÉDITION DIRECTE TABLE depenses
     # ======================================================
-    st.subheader("📋 Détail des dépenses")
+    st.subheader("✏️ Ajouter / Modifier / Supprimer")
 
-    cols_detail = [
-        "depense_id",
-        "date",
-        "compte",
-        "poste",
-        "montant_ttc",
-        "groupe_charges"
-    ]
+    resp_edit = (
+        supabase
+        .table("depenses")
+        .select("id, date, compte, poste, montant_ttc, annee")
+        .eq("annee", annee)
+        .execute()
+    )
 
-    if "fournisseur" in df_f.columns:
-        cols_detail.append("fournisseur")
-
-    df_detail = df_f[cols_detail].copy()
+    df_edit = pd.DataFrame(resp_edit.data) if resp_edit.data else pd.DataFrame(
+        columns=["id", "date", "compte", "poste", "montant_ttc", "annee"]
+    )
 
     edited_df = st.data_editor(
-        df_detail,
+        df_edit,
         use_container_width=True,
         num_rows="dynamic",
         key="depenses_editor"
     )
 
-    # ======================================================
-    # ENREGISTREMENT
-    # ======================================================
-    if st.button("💾 Enregistrer les modifications"):
+    if st.button("💾 Enregistrer"):
         for _, row in edited_df.iterrows():
-            if pd.isna(row["depense_id"]):
-                # INSERT
+            if pd.isna(row["id"]):
                 supabase.table("depenses").insert({
                     "annee": annee,
                     "date": row["date"],
                     "compte": row["compte"],
                     "poste": row["poste"],
-                    "montant_ttc": row["montant_ttc"],
-                    "fournisseur": row.get("fournisseur")
+                    "montant_ttc": row["montant_ttc"]
                 }).execute()
             else:
-                # UPDATE
                 supabase.table("depenses").update({
                     "date": row["date"],
                     "compte": row["compte"],
                     "poste": row["poste"],
-                    "montant_ttc": row["montant_ttc"],
-                    "fournisseur": row.get("fournisseur")
-                }).eq("id", row["depense_id"]).execute()
+                    "montant_ttc": row["montant_ttc"]
+                }).eq("id", row["id"]).execute()
 
         st.success("✅ Dépenses enregistrées")
         st.rerun()
