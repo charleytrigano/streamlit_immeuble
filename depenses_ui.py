@@ -54,14 +54,9 @@ def depenses_ui(supabase, annee):
     )
 
     # ======================================================
-    # NORMALISATION ABSOLUE (POINT CLÉ)
+    # NORMALISATION STRICTE (AUCUN TRI)
     # ======================================================
-    df["groupe_charges"] = (
-        df["groupe_charges"]
-        .fillna(0)
-        .astype(int)
-        .astype(str)
-    )
+    df["groupe_charges"] = df["groupe_charges"].fillna("Non affecté").astype(str)
 
     # ======================================================
     # FILTRES
@@ -71,19 +66,15 @@ def depenses_ui(supabase, annee):
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        groupes = ["Tous"] + sorted(df["groupe_charges"].unique())
+        groupes = ["Tous"] + list(df["groupe_charges"].unique())
         groupe_sel = st.selectbox("Groupe de charges", groupes)
 
     with col2:
-        fournisseurs = ["Tous"] + sorted(
-            df["fournisseur"].dropna().astype(str).unique()
-        )
+        fournisseurs = ["Tous"] + list(df["fournisseur"].dropna().astype(str).unique())
         fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
 
     with col3:
-        postes = ["Tous"] + sorted(
-            df["poste"].dropna().astype(str).unique()
-        )
+        postes = ["Tous"] + list(df["poste"].dropna().astype(str).unique())
         poste_sel = st.selectbox("Poste", postes)
 
     df_f = df.copy()
@@ -110,21 +101,18 @@ def depenses_ui(supabase, annee):
     c3.metric("Dépense moyenne", euro(moyenne))
 
     # ======================================================
-    # TABLEAU PAR GROUPE DE CHARGES
+    # TABLEAU PAR GROUPE DE CHARGES (SANS TRI)
     # ======================================================
     st.subheader("📊 Dépenses par groupe de charges")
 
     df_group = (
         df_f
-        .groupby("groupe_charges", as_index=False)
+        .groupby("groupe_charges", dropna=False, as_index=False)
         .agg(
             montant_total=("montant_ttc", "sum"),
             nb_lignes=("depense_id", "count")
         )
     )
-
-    # TRI SAFE (string → string)
-    df_group = df_group.sort_values("groupe_charges")
 
     df_group["montant_total"] = df_group["montant_total"].apply(euro)
 
@@ -138,7 +126,7 @@ def depenses_ui(supabase, annee):
     )
 
     # ======================================================
-    # DETAIL DES DEPENSES
+    # DETAIL DES DEPENSES (SANS TRI)
     # ======================================================
     st.subheader("📋 Détail des dépenses")
 
@@ -154,8 +142,6 @@ def depenses_ui(supabase, annee):
     ]].copy()
 
     df_detail["montant_ttc"] = df_detail["montant_ttc"].apply(euro)
-
-    df_detail = df_detail.sort_values("date")
 
     st.dataframe(
         df_detail.rename(columns={
