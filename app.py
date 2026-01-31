@@ -56,7 +56,7 @@ elif menu == "Répartition des lots":
 elif menu == "Charges par lot":
     charges_par_lot_ui()
 
-elif menu == "Appels de fonds trimestres":
+elif menu == "Appels de fonds trimestre":
     appels_fonds_trimestriels_ui()
 
 elif menu == "Contrôle répartition":
