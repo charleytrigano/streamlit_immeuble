@@ -9,6 +9,7 @@ from utils.repartition_lots_ui import repartition_lots_ui
 from utils.appels_fonds_trimestre_ui import appels_fonds_trimestre_ui
 
 
+
 # =========================
 # CONFIG STREAMLIT
 # =========================
