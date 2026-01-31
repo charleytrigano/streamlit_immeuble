@@ -7,7 +7,7 @@ st.success("🚀 app.py chargé correctement")
 # --- Imports modules UI ---
 try:
     from supabase_client import get_supabase_client
-    from budget_ui import budget_ui
+    from budget_ui import main as budget_ui
     from depenses_ui import depenses_ui
     from lots_ui import lots_ui
     from repartition_lots_ui import repartition_lots_ui
