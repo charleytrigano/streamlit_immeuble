@@ -116,6 +116,23 @@ def appels_fonds_trimestre_ui(supabase, annee):
     # =========================
     st.markdown("### 📋 Détail par propriétaire")
 
+
+
+# =========================
+    # LIGNE DE TOTAUX
+    # =========================
+    total_row = {"proprietaire": "TOTAL"}
+
+    for col in df_pivot.columns:
+        if col != "proprietaire":
+            total_row[col] = df_pivot[col].sum()
+
+    df_pivot = pd.concat(
+        [df_pivot, pd.DataFrame([total_row])],
+        ignore_index=True
+    )
+
+
     st.dataframe(
         df_pivot.style.format(
             {col: euro for col in df_pivot.columns if col != "proprietaire"}
