@@ -1,23 +1,34 @@
 import streamlit as st
-from supabase_client import get_supabase
+from supabase import create_client, Client
 
-# -----------------------------
-# Configuration page
-# -----------------------------
+# =========================================================
+# CONFIG STREAMLIT
+# =========================================================
 st.set_page_config(
     page_title="Pilotage des charges",
     layout="wide"
 )
 
-# -----------------------------
-# Connexion Supabase
-# -----------------------------
+# =========================================================
+# SUPABASE — INITIALISATION DIRECTE (SANS IMPORT LOCAL)
+# =========================================================
+def get_supabase() -> Client:
+    try:
+        url = st.secrets["supabase_url"]
+        key = st.secrets["supabase_anon_key"]
+    except KeyError as e:
+        st.error(f"❌ Clé Supabase manquante dans st.secrets : {e}")
+        st.stop()
+
+    return create_client(url, key)
+
+
 supabase = get_supabase()
 st.success("✅ Supabase connecté correctement")
 
-# -----------------------------
-# Filtres globaux
-# -----------------------------
+# =========================================================
+# FILTRES GLOBAUX
+# =========================================================
 st.sidebar.title("🔎 Filtres globaux")
 
 annee = st.sidebar.selectbox(
@@ -27,9 +38,9 @@ annee = st.sidebar.selectbox(
     key="filtre_annee"
 )
 
-# -----------------------------
-# Navigation principale
-# -----------------------------
+# =========================================================
+# NAVIGATION
+# =========================================================
 st.sidebar.title("📊 Pilotage des charges")
 
 page = st.sidebar.radio(
@@ -43,9 +54,9 @@ page = st.sidebar.radio(
     key="navigation_principale"
 )
 
-# -----------------------------
-# Pages
-# -----------------------------
+# =========================================================
+# CHARGEMENT SÉCURISÉ DES MODULES UI
+# =========================================================
 def safe_import(module_name, func_name):
     try:
         module = __import__(module_name, fromlist=[func_name])
@@ -56,6 +67,9 @@ def safe_import(module_name, func_name):
         return None
 
 
+# =========================================================
+# ROUTAGE DES PAGES
+# =========================================================
 if page == "📄 Dépenses":
     ui = safe_import("depenses_ui", "depenses_ui")
     if ui:
