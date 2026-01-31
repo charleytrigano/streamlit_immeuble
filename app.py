@@ -1,73 +1,116 @@
 import streamlit as st
-from config import get_supabase_client
+import pandas as pd
 
-# UI modules (TOUS À LA RACINE)
-from depenses_ui import depenses_ui
-from budget_ui import budget_ui
-from lots_ui import lots_ui
-from repartition_lots_ui import repartition_lots_ui
-from charges_par_lot_ui import charges_par_lot_ui
-from appels_fonds_trimestre_ui import appels_fonds_trimestre_ui
-from controle_repartition_ui import controle_repartition_ui
-from plan_comptable_ui import plan_comptable_ui
+TAUX_ALUR = 0.05
+BASE_TANTIEMES = 10000
 
 
-# -----------------------------
-# App init
-# -----------------------------
-st.set_page_config(page_title="Gestion immeuble", layout="wide")
-st.success("🚀 app.py chargé correctement")
+def appels_fonds_ui(supabase):
+    st.header("📢 Appels de fonds trimestriels")
 
-supabase = get_supabase_client()
+    # =========================
+    # Paramètres
+    # =========================
+    annee = st.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
+    trimestre = st.selectbox("Trimestre", [1, 2, 3, 4], index=0)
 
-# -----------------------------
-# Sidebar
-# -----------------------------
-st.sidebar.title("📂 Navigation")
+    # =========================
+    # Budget annuel
+    # =========================
+    bud_resp = (
+        supabase
+        .table("budgets")
+        .select("budget")
+        .eq("annee", annee)
+        .execute()
+    )
 
-annee = st.sidebar.selectbox(
-    "Année",
-    [2023, 2024, 2025, 2026],
-    index=1
-)
+    if not bud_resp.data:
+        st.warning("Aucun budget enregistré pour cette année.")
+        return
 
-onglet = st.sidebar.radio(
-    "Module",
-    [
-        "Dépenses",
-        "Budget",
-        "Lots",
-        "Répartition des lots",
-        "Charges par lot",
-        "Appels de fonds trimestriels",
-        "Contrôle répartition",
-        "Plan comptable",
-    ]
-)
+    budget_annuel = sum(b["budget"] for b in bud_resp.data)
+    montant_alur = budget_annuel * TAUX_ALUR
+    total_a_appeler = budget_annuel + montant_alur
+    appel_trimestriel = total_a_appeler / 4
 
-# -----------------------------
-# Routing
-# -----------------------------
-if onglet == "Dépenses":
-    depenses_ui(supabase, annee)
+    # =========================
+    # Lots
+    # =========================
+    lots_resp = (
+        supabase
+        .table("lots")
+        .select("lot_id, lot, proprietaire, tantiemes")
+        .execute()
+    )
 
-elif onglet == "Budget":
-    budget_ui(supabase, annee)
+    if not lots_resp.data:
+        st.warning("Aucun lot trouvé.")
+        return
 
-elif onglet == "Lots":
-    lots_ui(supabase)
+    df_lots = pd.DataFrame(lots_resp.data)
 
-elif onglet == "Répartition des lots":
-    repartition_lots_ui(supabase)
+    # Sécurité
+    df_lots["tantiemes"] = pd.to_numeric(df_lots["tantiemes"], errors="coerce").fillna(0)
 
-elif onglet == "Charges par lot":
-    charges_par_lot_ui(supabase, annee)
+    # =========================
+    # Calcul appels par lot
+    # =========================
+    df_lots["part_lot"] = (
+        appel_trimestriel * df_lots["tantiemes"] / BASE_TANTIEMES
+    )
 
-elif onglet == "Appels de fonds trimestriels":
-    appels_fonds_trimestre_ui(supabase, annee)
+    # =========================
+    # Tableau par propriétaire
+    # =========================
+    df_owner = (
+        df_lots
+        .groupby("proprietaire", as_index=False)
+        .agg(
+            tantiemes=("tantiemes", "sum"),
+            appel=("part_lot", "sum")
+        )
+    )
 
-elif onglet == "Contrôle répartition":
-    controle_repartition_ui(supabase)
+    # =========================
+    # Affichage KPI
+    # =========================
+    col1, col2, col3, col4 = st.columns(4)
 
-elif onglet == "Plan comptable":
-    plan_comptable_ui(supabase)
+    col1.metric("Budget annuel", f"{budget_annuel:,.2f} €".replace(",", " "))
+    col2.metric("Loi ALUR (5 %)", f"{montant_alur:,.2f} €".replace(",", " "))
+    col3.metric("Total annuel", f"{total_a_appeler:,.2f} €".replace(",", " "))
+    col4.metric(
+        f"Appel T{trimestre}",
+        f"{appel_trimestriel:,.2f} €".replace(",", " ")
+    )
+
+    # =========================
+    # Tableau final
+    # =========================
+    st.markdown("### 📄 Détail des appels par propriétaire")
+
+    table = df_owner.rename(columns={
+        "proprietaire": "Propriétaire",
+        "tantiemes": "Tantièmes",
+        "appel": f"Appel T{trimestre} (€)"
+    })
+
+    # Ligne TOTAL
+    total_row = pd.DataFrame([{
+        "Propriétaire": "TOTAL",
+        "Tantièmes": table["Tantièmes"].sum(),
+        f"Appel T{trimestre} (€)": table[f"Appel T{trimestre} (€)"].sum()
+    }])
+
+    table = pd.concat([table, total_row], ignore_index=True)
+
+    st.dataframe(table, use_container_width=True)
+
+    # =========================
+    # Contrôle
+    # =========================
+    st.caption(
+        "✔ Répartition proportionnelle aux tantièmes — "
+        "Budget + Loi ALUR répartis trimestriellement."
+    )
