@@ -1,125 +1,110 @@
 import streamlit as st
 import pandas as pd
 
-
+# =========================================================
+# BUDGET VS RÉEL
+# =========================================================
 def budget_vs_reel_ui(supabase, annee):
+
     st.header(f"📊 Budget vs Réel – {annee}")
 
-    # =========================
-    # BUDGETS
-    # =========================
-    r_budget = (
-        supabase
-        .table("budgets")
-        .select("annee, groupe_compte, budget")
-        .eq("annee", annee)
-        .execute()
-    )
-
-    if r_budget.data is None or len(r_budget.data) == 0:
-        st.warning("Aucun budget pour cette année.")
-        return
-
-    df_budget = pd.DataFrame(r_budget.data)
-
-    # =========================
-    # DÉPENSES (VUE ENRICHIE)
-    # =========================
-    r_dep = (
-        supabase
-        .table("v_depenses_enrichies")
-        .select("*")
-        .eq("annee", annee)
-        .execute()
-    )
-
-    if r_dep.data is None or len(r_dep.data) == 0:
-        st.warning("Aucune dépense pour cette année.")
-        return
-
-    df_dep = pd.DataFrame(r_dep.data)
-
-    # =========================
-    # FILTRE GROUPE DE CHARGES
-    # =========================
-    groupes = ["Tous"] + sorted(
-        df_dep["groupe_charges"].dropna().unique().tolist()
-    )
-
-    groupe_sel = st.selectbox(
-        "Groupe de charges",
-        groupes,
-        key="bvr_filtre_groupe_charges"
-    )
-
-    if groupe_sel != "Tous":
-        df_dep = df_dep[df_dep["groupe_charges"] == groupe_sel]
-
-    # =========================
-    # AGRÉGATION RÉEL
-    # =========================
-    df_reel = (
-        df_dep
-        .groupby(["groupe_charges", "groupe_compte"], as_index=False)
-        .agg(reel=("montant_ttc", "sum"))
-    )
-
-    # =========================
-    # AGRÉGATION BUDGET
-    # =========================
-    df_bud = (
-        df_budget
-        .groupby("groupe_compte", as_index=False)
-        .agg(budget=("budget", "sum"))
-    )
-
-    # =========================
-    # MERGE
-    # =========================
-    df = df_reel.merge(
-        df_bud,
-        on="groupe_compte",
-        how="left"
-    )
-
-    df["budget"] = df["budget"].fillna(0)
-    df["ecart"] = df["budget"] - df["reel"]
-
-    # =========================
-    # SOUS-TOTAUX PAR GROUPE DE CHARGES
-    # =========================
-    totals = (
-        df
-        .groupby("groupe_charges", as_index=False)
-        .agg(
-            budget=("budget", "sum"),
-            reel=("reel", "sum"),
-            ecart=("ecart", "sum")
+    try:
+        # =========================
+        # BUDGET (TABLE budgets)
+        # =========================
+        r_budget = (
+            supabase
+            .table("budgets")
+            .select(
+                "annee, groupe_charges, groupe_compte, montant"
+            )
+            .eq("annee", annee)
+            .execute()
         )
-    )
 
-    totals["groupe_compte"] = "TOTAL"
+        if not r_budget.data:
+            st.warning("Aucune donnée budget")
+            return
 
-    df_final = pd.concat([df, totals], ignore_index=True)
+        df_budget = pd.DataFrame(r_budget.data)
+        df_budget.rename(columns={"montant": "budget"}, inplace=True)
 
-    # =========================
-    # AFFICHAGE
-    # =========================
-    st.subheader("📋 Comparaison Budget / Réel")
+        # =========================
+        # RÉEL (VUE v_depenses_enrichies)
+        # =========================
+        r_dep = (
+            supabase
+            .table("v_depenses_enrichies")
+            .select(
+                "annee, groupe_charges, groupe_compte, montant_ttc"
+            )
+            .eq("annee", annee)
+            .execute()
+        )
 
-    st.dataframe(
-        df_final.sort_values(["groupe_charges", "groupe_compte"]),
-        use_container_width=True
-    )
+        if not r_dep.data:
+            st.warning("Aucune dépense réelle")
+            return
 
-    # =========================
-    # KPI
-    # =========================
-    total_budget = df["budget"].sum()
-    total_reel = df["reel"].sum()
-    total_ecart = total_budget - total_reel
+        df_dep = pd.DataFrame(r_dep.data)
+        df_dep.rename(columns={"montant_ttc": "reel"}, inplace=True)
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Budget total (€)", f"{total_budget:,.2f}")
-    c2.metric("Réel total (€)", f"{total_reel:,.2f}")
-    c3.metric("Écart (€)", f"{total_ecart:,.2f}")
+        # =========================
+        # FILTRE GROUPE DE CHARGES
+        # =========================
+        groupes = ["Tous"] + sorted(df_budget["groupe_charges"].dropna().unique())
+
+        groupe_sel = st.selectbox(
+            "Groupe de charges",
+            groupes,
+            key="budget_vs_reel_groupe_charges"
+        )
+
+        if groupe_sel != "Tous":
+            df_budget = df_budget[df_budget["groupe_charges"] == groupe_sel]
+            df_dep = df_dep[df_dep["groupe_charges"] == groupe_sel]
+
+        # =========================
+        # AGRÉGATION
+        # =========================
+        budget_grp = (
+            df_budget
+            .groupby(["groupe_charges", "groupe_compte"], as_index=False)
+            .agg({"budget": "sum"})
+        )
+
+        reel_grp = (
+            df_dep
+            .groupby(["groupe_charges", "groupe_compte"], as_index=False)
+            .agg({"reel": "sum"})
+        )
+
+        df = pd.merge(
+            budget_grp,
+            reel_grp,
+            on=["groupe_charges", "groupe_compte"],
+            how="outer"
+        ).fillna(0)
+
+        df["écart"] = df["budget"] - df["reel"]
+
+        # =========================
+        # AFFICHAGE
+        # =========================
+        st.dataframe(
+            df.sort_values(["groupe_charges", "groupe_compte"]),
+            use_container_width=True
+        )
+
+        # =========================
+        # KPI
+        # =========================
+        c1, c2, c3 = st.columns(3)
+
+        c1.metric("Budget total", f"{df['budget'].sum():,.2f} €")
+        c2.metric("Réel total", f"{df['reel'].sum():,.2f} €")
+        c3.metric("Écart", f"{df['écart'].sum():,.2f} €")
+
+    except Exception as e:
+        st.error("❌ Erreur dans Budget vs Réel")
+        st.exception(e)
