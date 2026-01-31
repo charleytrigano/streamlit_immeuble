@@ -15,58 +15,77 @@ def depenses_ui(supabase, annee):
     # ======================================================
     # CHARGEMENT DES DÉPENSES
     # ======================================================
-    dep_resp = (
+    resp = (
         supabase
         .table("depenses")
-        .select(
-            "depense_id, annee, compte, poste, fournisseur, date, montant_ttc, lot_id"
-        )
+        .select("""
+            depense_id,
+            annee,
+            compte,
+            poste,
+            fournisseur,
+            date,
+            montant_ttc,
+            lot_id
+        """)
         .eq("annee", annee)
         .execute()
     )
 
-    if not dep_resp.data:
+    if not resp.data:
         st.info("Aucune dépense pour cette année.")
         return
 
-    df_dep = pd.DataFrame(dep_resp.data)
+    df = pd.DataFrame(resp.data)
 
     # ======================================================
-    # CHARGEMENT PLAN COMPTABLE
+    # SÉCURISATION ABSOLUE DES COLONNES
     # ======================================================
-    plan_resp = (
+    colonnes = [
+        "depense_id",
+        "annee",
+        "compte",
+        "poste",
+        "fournisseur",
+        "date",
+        "montant_ttc",
+        "lot_id",
+    ]
+
+    for col in colonnes:
+        if col not in df.columns:
+            df[col] = ""
+
+    df["fournisseur"] = df["fournisseur"].fillna("")
+    df["poste"] = df["poste"].fillna("")
+    df["compte"] = df["compte"].fillna("")
+
+    # ======================================================
+    # PLAN COMPTABLE → GROUPE DE CHARGES
+    # ======================================================
+    plan = (
         supabase
         .table("plan_comptable")
-        .select("compte_8, libelle, groupe_charges")
+        .select("compte_8, groupe_charges")
         .execute()
     )
 
-    df_plan = pd.DataFrame(plan_resp.data)
+    if plan.data:
+        df_plan = pd.DataFrame(plan.data)
 
-    # ======================================================
-    # JOINTURE
-    # ======================================================
-    if not df_plan.empty:
-        df = df_dep.merge(
+        df = df.merge(
             df_plan,
             left_on="compte",
             right_on="compte_8",
             how="left"
         )
     else:
-        df = df_dep.copy()
+        df["groupe_charges"] = "Non affecté"
 
-    # ======================================================
-    # SÉCURISATION DES COLONNES
-    # ======================================================
     if "groupe_charges" not in df.columns:
         df["groupe_charges"] = "Non affecté"
 
-    if "libelle" not in df.columns:
-        df["libelle"] = ""
-
     df["groupe_charges"] = df["groupe_charges"].fillna("Non affecté")
-    df["fournisseur"] = df["fournisseur"].fillna("")
 
     # ======================================================
     # FILTRES
@@ -76,27 +95,33 @@ def depenses_ui(supabase, annee):
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        fournisseurs = ["Tous"] + sorted(df["fournisseur"].unique().tolist())
+        fournisseurs = ["Tous"] + sorted(
+            df["fournisseur"].astype(str).unique().tolist()
+        )
         fournisseur_sel = st.selectbox(
             "Fournisseur",
             fournisseurs,
-            key="filtre_fournisseur_depenses"
+            key="filtre_fournisseur"
         )
 
     with col2:
-        groupes = ["Tous"] + sorted(df["groupe_charges"].astype(str).unique().tolist())
+        groupes = ["Tous"] + sorted(
+            df["groupe_charges"].astype(str).unique().tolist()
+        )
         groupe_sel = st.selectbox(
             "Groupe de charges",
             groupes,
-            key="filtre_groupe_charges_depenses"
+            key="filtre_groupe"
         )
 
     with col3:
-        comptes = ["Tous"] + sorted(df["compte"].dropna().unique().tolist())
+        comptes = ["Tous"] + sorted(
+            df["compte"].astype(str).unique().tolist()
+        )
         compte_sel = st.selectbox(
-            "Compte comptable",
+            "Compte",
             comptes,
-            key="filtre_compte_depenses"
+            key="filtre_compte"
         )
 
     # ======================================================
@@ -134,7 +159,6 @@ def depenses_ui(supabase, annee):
         df_f[[
             "date",
             "compte",
-            "libelle",
             "poste",
             "fournisseur",
             "groupe_charges",
