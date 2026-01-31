@@ -2,111 +2,123 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 
-# --------------------------------------------------
+# =========================================================
 # CONFIG
-# --------------------------------------------------
+# =========================================================
 st.set_page_config(
     page_title="Pilotage des charges",
-    layout="wide"
+    layout="wide",
 )
 
-# --------------------------------------------------
+# =========================================================
 # SUPABASE
-# --------------------------------------------------
-supabase = create_client(
-    st.secrets["SUPABASE_URL"],
-    st.secrets["SUPABASE_ANON_KEY"]
-)
+# =========================================================
+SUPABASE_URL = st.secrets["supabase_url"]
+SUPABASE_KEY = st.secrets["supabase_anon_key"]
 
-# --------------------------------------------------
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+st.success("🚀 Connexion Supabase OK")
+
+# =========================================================
 # SIDEBAR – FILTRES GLOBAUX
-# --------------------------------------------------
-st.sidebar.title("Filtres globaux")
+# =========================================================
+st.sidebar.header("🔎 Filtres globaux")
 
-# Années disponibles
-years_resp = supabase.table("v_depenses_detail") \
-    .select("annee") \
-    .execute()
-
-years = sorted({row["annee"] for row in years_resp.data})
-annee = st.sidebar.selectbox("Année", years, index=len(years) - 1)
-
-# Groupes de charges disponibles
-groups_resp = supabase.table("v_depenses_detail") \
-    .select("groupe_charges") \
-    .eq("annee", annee) \
-    .execute()
-
-groupes = sorted({row["groupe_charges"] for row in groups_resp.data if row["groupe_charges"]})
-groupe_selected = st.sidebar.multiselect(
-    "Groupe de charges",
-    groupes,
-    default=groupes
+annee = st.sidebar.selectbox(
+    "Année",
+    options=[2024, 2025],
+    index=1
 )
 
-# --------------------------------------------------
-# ONGLET PRINCIPAL
-# --------------------------------------------------
-st.title("📊 Pilotage des charges")
-
+# =========================================================
+# TABS
+# =========================================================
 tab1, tab2 = st.tabs([
-    "📈 Dépenses par groupe de charges",
+    "📊 Dépenses par groupe de charges",
     "📋 Détail des dépenses"
 ])
 
-# --------------------------------------------------
-# ONGLET 1 – SYNTHESE
-# --------------------------------------------------
+# =========================================================
+# TAB 1 – DEPENSES PAR GROUPE
+# =========================================================
 with tab1:
-    st.subheader("Dépenses par groupe de charges")
+    st.header("📊 Dépenses par groupe de charges")
 
-    query = supabase.table("v_depenses_par_groupe_charges") \
-        .select("*") \
-        .eq("annee", annee)
-
-    if groupe_selected:
-        query = query.in_("groupe_charges", groupe_selected)
-
-    data = query.execute().data
-    df = pd.DataFrame(data)
+    resp = supabase.table("v_depenses_par_groupe_charges").select("*").execute()
+    df = pd.DataFrame(resp.data)
 
     if df.empty:
         st.warning("Aucune donnée")
     else:
-        df = df.sort_values("total_depenses", ascending=False)
+        df = df[df["annee"] == annee]
 
+        groupes = ["Tous"] + sorted(df["groupe_charges"].dropna().unique().tolist())
+        groupe_sel = st.selectbox("Groupe de charges", groupes)
+
+        if groupe_sel != "Tous":
+            df = df[df["groupe_charges"] == groupe_sel]
+
+        st.subheader("💰 Totaux")
         st.dataframe(
-            df,
+            df[["groupe_charges", "total_depenses"]]
+            .sort_values("total_depenses", ascending=False),
             use_container_width=True
         )
 
+        st.subheader("📈 Visualisation")
         st.bar_chart(
             df.set_index("groupe_charges")["total_depenses"]
         )
 
-# --------------------------------------------------
-# ONGLET 2 – DETAIL
-# --------------------------------------------------
+# =========================================================
+# TAB 2 – DETAIL DES DEPENSES
+# =========================================================
 with tab2:
-    st.subheader("Détail des dépenses")
+    st.header("📋 Détail des dépenses")
 
-    query = supabase.table("v_depenses_detail") \
-        .select("*") \
-        .eq("annee", annee)
-
-    if groupe_selected:
-        query = query.in_("groupe_charges", groupe_selected)
-
-    data = query.execute().data
-    df = pd.DataFrame(data)
+    resp = supabase.table("v_depenses_detail").select("*").execute()
+    df = pd.DataFrame(resp.data)
 
     if df.empty:
         st.warning("Aucune dépense")
     else:
-        df = df.sort_values("date", ascending=False)
+        df = df[df["annee"] == annee]
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            groupes = ["Tous"] + sorted(df["groupe_charges"].dropna().unique().tolist())
+            groupe_sel = st.selectbox("Groupe de charges", groupes)
+
+        with col2:
+            comptes = ["Tous"] + sorted(df["compte"].dropna().unique().tolist())
+            compte_sel = st.selectbox("Compte", comptes)
+
+        with col3:
+            postes = ["Tous"] + sorted(df["poste"].dropna().unique().tolist())
+            poste_sel = st.selectbox("Poste", postes)
+
+        if groupe_sel != "Tous":
+            df = df[df["groupe_charges"] == groupe_sel]
+
+        if compte_sel != "Tous":
+            df = df[df["compte"] == compte_sel]
+
+        if poste_sel != "Tous":
+            df = df[df["poste"] == poste_sel]
+
+        st.subheader("🧾 Liste des dépenses")
 
         st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True
+            df.sort_values("date", ascending=False),
+            use_container_width=True
+        )
+
+        st.subheader("⬇️ Export")
+        st.download_button(
+            "Télécharger en CSV",
+            df.to_csv(index=False).encode("utf-8"),
+            file_name=f"depenses_{annee}.csv",
+            mime="text/csv"
         )
