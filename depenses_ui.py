@@ -13,14 +13,13 @@ def depenses_ui(supabase, annee):
     st.header(f"📄 Dépenses – {annee}")
 
     # ======================================================
-    # CHARGEMENT DES DONNÉES
+    # CHARGEMENT DES DÉPENSES
     # ======================================================
     dep_resp = (
         supabase
         .table("depenses")
         .select(
-            "depense_id, annee, compte, poste, fournisseur, date, "
-            "montant_ttc, lot_id"
+            "depense_id, annee, compte, poste, fournisseur, date, montant_ttc, lot_id"
         )
         .eq("annee", annee)
         .execute()
@@ -32,6 +31,9 @@ def depenses_ui(supabase, annee):
 
     df_dep = pd.DataFrame(dep_resp.data)
 
+    # ======================================================
+    # CHARGEMENT PLAN COMPTABLE
+    # ======================================================
     plan_resp = (
         supabase
         .table("plan_comptable")
@@ -42,14 +44,23 @@ def depenses_ui(supabase, annee):
     df_plan = pd.DataFrame(plan_resp.data)
 
     # ======================================================
-    # NORMALISATION / JOINTURE
+    # JOINTURE SÉCURISÉE
     # ======================================================
-    df = df_dep.merge(
-        df_plan,
-        left_on="compte",
-        right_on="compte_8",
-        how="left"
-    )
+    if not df_plan.empty:
+        df = df_dep.merge(
+            df_plan,
+            left_on="compte",
+            right_on="compte_8",
+            how="left"
+        )
+    else:
+        df = df_dep.copy()
+        df["libelle"] = None
+        df["groupe_charges"] = None
+
+    # 🔐 GARANTIE ABSOLUE
+    if "groupe_charges" not in df.columns:
+        df["groupe_charges"] = "Non affecté"
 
     df["groupe_charges"] = df["groupe_charges"].fillna("Non affecté")
 
@@ -61,15 +72,15 @@ def depenses_ui(supabase, annee):
     colf1, colf2, colf3 = st.columns(3)
 
     with colf1:
-        fournisseurs = ["Tous"] + sorted(df["fournisseur"].dropna().unique())
+        fournisseurs = ["Tous"] + sorted(df["fournisseur"].dropna().unique().tolist())
         fournisseur_sel = st.selectbox("Fournisseur", fournisseurs)
 
     with colf2:
-        groupes = ["Tous"] + sorted(df["groupe_charges"].dropna().unique())
+        groupes = ["Tous"] + sorted(df["groupe_charges"].unique().tolist())
         groupe_sel = st.selectbox("Groupe de charges", groupes)
 
     with colf3:
-        comptes = ["Tous"] + sorted(df["compte"].dropna().unique())
+        comptes = ["Tous"] + sorted(df["compte"].dropna().unique().tolist())
         compte_sel = st.selectbox("Compte comptable", comptes)
 
     df_f = df.copy()
@@ -96,7 +107,7 @@ def depenses_ui(supabase, annee):
     col3.metric("Dépense moyenne", euro(dep_moy))
 
     # ======================================================
-    # TABLEAU DÉTAILLÉ DES DÉPENSES
+    # TABLEAU DÉTAILLÉ
     # ======================================================
     st.subheader("📋 Détail des dépenses")
 
@@ -118,14 +129,12 @@ def depenses_ui(supabase, annee):
         "groupe_charges": "Groupe de charges",
         "montant_ttc": "Montant TTC",
         "lot_id": "Lot"
-    })
-
-    df_aff = df_aff.sort_values("Date")
+    }).sort_values("Date")
 
     st.dataframe(df_aff, use_container_width=True)
 
     # ======================================================
-    # TABLEAU PAR GROUPE DE CHARGES
+    # DÉPENSES PAR GROUPE DE CHARGES
     # ======================================================
     st.subheader("📊 Dépenses par groupe de charges")
 
