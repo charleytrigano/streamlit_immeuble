@@ -2,7 +2,7 @@ import streamlit as st
 from supabase import create_client
 
 # =========================
-# CONFIG
+# CONFIG STREAMLIT
 # =========================
 st.set_page_config(
     page_title="Pilotage des charges",
@@ -24,17 +24,16 @@ def get_supabase():
 def main():
     supabase = get_supabase()
 
-    # ---- Filtres globaux
-    st.sidebar.title("🔎 Filtres")
+    st.sidebar.title("🔎 Filtres globaux")
     annee = st.sidebar.selectbox("Année", [2023, 2024, 2025, 2026], index=2)
 
-    st.title("📊 Pilotage des charges")
+    st.title("📊 Pilotage des charges de l’immeuble")
 
     tab_dep, tab_bud, tab_bvr, tab_plan = st.tabs([
         "📄 Dépenses",
         "💰 Budget",
         "📊 Budget vs Réel",
-        "📘 Plan comptable",
+        "📘 Plan comptable"
     ])
 
     with tab_dep:
@@ -53,8 +52,5 @@ def main():
         from plan_comptable_ui import plan_comptable_ui
         plan_comptable_ui(supabase)
 
-# =========================
-# RUN
-# =========================
 if __name__ == "__main__":
     main()
