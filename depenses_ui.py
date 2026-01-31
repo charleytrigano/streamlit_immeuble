@@ -6,7 +6,7 @@ def depenses_ui(supabase, annee):
     st.title("💸 Dépenses par groupe de charges")
 
     # =========================
-    # Chargement depuis la vue
+    # Chargement depuis la vue agrégée
     # =========================
     resp = (
         supabase
@@ -23,9 +23,9 @@ def depenses_ui(supabase, annee):
     df = pd.DataFrame(resp.data)
 
     # =========================
-    # Vérification minimale
+    # Vérification des colonnes
     # =========================
-    colonnes_attendues = {"groupe_charges", "montant_ttc"}
+    colonnes_attendues = {"annee", "groupe_charges", "total_depenses"}
     if not colonnes_attendues.issubset(df.columns):
         st.error("Colonnes manquantes dans la vue.")
         st.write("Colonnes disponibles :", list(df.columns))
@@ -53,29 +53,28 @@ def depenses_ui(supabase, annee):
         df = df[df["groupe_charges"].astype(str) == groupe_sel]
 
     # =========================
-    # Agrégation
-    # =========================
-    df_group = (
-        df
-        .groupby("groupe_charges", as_index=False)
-        .agg(total_depenses=("montant_ttc", "sum"))
-        .sort_values("total_depenses", ascending=False)
-    )
-
-    # =========================
-    # Affichage
+    # Affichage tableau
     # =========================
     st.subheader("📊 Dépenses par groupe de charges")
 
+    df_affichage = (
+        df
+        .rename(columns={
+            "groupe_charges": "Groupe de charges",
+            "total_depenses": "Total des dépenses (€)"
+        })
+        .sort_values("Total des dépenses (€)", ascending=False)
+    )
+
     st.dataframe(
-        df_group,
+        df_affichage,
         use_container_width=True
     )
 
     # =========================
     # KPI
     # =========================
-    total = df_group["total_depenses"].sum()
+    total = df["total_depenses"].sum()
 
     st.metric(
         "Total des dépenses (€)",
